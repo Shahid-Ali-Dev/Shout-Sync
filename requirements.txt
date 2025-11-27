@@ -1,0 +1,15 @@
+Django==4.2.7
+djangorestframework==3.14.0
+django-cors-headers==4.3.1
+djangorestframework-simplejwt==5.3.0
+python-decouple==3.8
+psycopg2-binary==2.9.7
+redis==4.6.0
+celery==5.3.4
+django-celery-results==2.5.1
+channels==4.0.0
+channels-redis==4.1.0
+Pillow==10.0.1
+requests==2.31.0
+brevo==1.0.0
+groq==0.3.0
