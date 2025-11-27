@@ -3,7 +3,7 @@ import axios from 'axios';
 const API_BASE_URL = process.env.REACT_APP_API_URL || 'https://shout-sync.onrender.com';
 
 const api = axios.create({
-  baseURL: `${API_BASE_URL}/api/auth`, 
+  baseURL: `${API_BASE_URL}/api`,  // Remove /auth from here
   headers: {
     'Content-Type': 'application/json',
   },
@@ -31,26 +31,26 @@ api.interceptors.response.use(
 );
 
 export const authAPI = {
-  register: (userData: any) => api.post('/register/', userData),  // Remove /auth
-  login: (credentials: any) => api.post('/login/', credentials),  // Remove /auth
-  logout: () => api.post('/logout/'),  // Remove /auth
-  getProfile: () => api.get('/profile/'),  // Remove /auth
+  register: (userData: any) => api.post('/auth/register/', userData),
+  login: (credentials: any) => api.post('/auth/login/', credentials),
+  logout: () => api.post('/auth/logout/'),
+  getProfile: () => api.get('/auth/profile/'),
   
   // Public invitation endpoints (no authentication required)
-  acceptInvitationPublic: (token: string) => api.post(`/invitations/public/${token}/accept/`),
-  rejectInvitationPublic: (token: string) => api.post(`/invitations/public/${token}/reject/`),
-  getInvitationDetails: (token: string) => api.get(`/invitations/public/${token}/`),
+  acceptInvitationPublic: (token: string) => api.post(`/auth/invitations/public/${token}/accept/`),
+  rejectInvitationPublic: (token: string) => api.post(`/auth/invitations/public/${token}/reject/`),
+  getInvitationDetails: (token: string) => api.get(`/auth/invitations/public/${token}/`),
   
   // Authenticated invitation endpoints
-  acceptInvitation: (token: string) => api.post(`/invitations/${token}/accept/`),
-  rejectInvitation: (token: string) => api.post(`/invitations/${token}/reject/`),
-  getPendingInvitations: () => api.get('/invitations/pending/'),
+  acceptInvitation: (token: string) => api.post(`/auth/invitations/${token}/accept/`),
+  rejectInvitation: (token: string) => api.post(`/auth/invitations/${token}/reject/`),
+  getPendingInvitations: () => api.get('/auth/invitations/pending/'),
 
   checkPendingInvitations: (email: string) => 
-    api.get(`/invitations/check-pending/?email=${email}`),
+    api.get(`/auth/invitations/check-pending/?email=${email}`),
   
   acceptPendingInvitations: (email: string) => 
-    api.post('/invitations/accept-pending/', { email }),
+    api.post('/auth/invitations/accept-pending/', { email }),
 };
 
 export default api;
