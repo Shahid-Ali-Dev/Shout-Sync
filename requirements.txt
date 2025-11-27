@@ -13,3 +13,13 @@ Pillow==10.0.1
 requests==2.31.0
 brevo==1.0.0
 groq==0.3.0
+
+# Production dependencies
+gunicorn==21.2.0
+whitenoise==6.6.0
+python-multipart==0.0.6
+
+# Database (keep only one)
+psycopg2-binary==2.9.7  # For PostgreSQL
+# Optional: If you want to use environment variables
+python-dotenv==1.0.0
