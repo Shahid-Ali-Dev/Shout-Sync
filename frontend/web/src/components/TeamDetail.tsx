@@ -1668,8 +1668,8 @@ const getProjectStatusColorInProjectDetail = (status: number | 'all') => {
           </Box>
         </DialogTitle>
         
-        <DialogContent sx={{ p: 4, mt: 2 }}>
-          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+        <DialogContent sx={{ p: 4 }}>
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3,mt: 2 }}>
             <TextField
               label="Email Address"
               type="email"
@@ -1977,7 +1977,7 @@ const getProjectStatusColorInProjectDetail = (status: number | 'all') => {
           </Box>
         </DialogTitle>
         
-        <DialogContent sx={{ p: 4 }}>
+        <DialogContent sx={{ p: 4,mt: 2 }}>
           <Typography paragraph>
             Are you sure you want to leave <strong>{team.name}</strong>?
           </Typography>
