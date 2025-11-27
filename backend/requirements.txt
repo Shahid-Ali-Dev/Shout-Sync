@@ -1,0 +1,32 @@
+# Core Django
+Django==4.2.7
+djangorestframework==3.14.0
+django-cors-headers==4.3.1
+
+# Authentication
+djangorestframework-simplejwt==5.3.0
+
+# Environment variables
+python-decouple==3.8
+python-dotenv==1.0.0
+
+# Database
+psycopg2-binary==2.9.7
+
+# Production
+gunicorn==21.2.0
+whitenoise==6.6.0
+
+# Optional (remove if not needed):
+Pillow==10.0.1
+requests==2.31.0
+
+# Remove these for now (they're causing issues):
+# brevo==1.0.0  # This package doesn't exist
+# groq==0.3.0   # Remove if not essential
+# redis==4.6.0
+# celery==5.3.4
+# django-celery-results==2.5.1
+# channels==4.0.0
+# channels-redis==4.1.0
+# python-multipart==0.0.6
