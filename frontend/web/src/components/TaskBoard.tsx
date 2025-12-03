@@ -622,20 +622,22 @@ const handleCreateTask = async () => {
                   <MenuItem value={TaskStatus.TODO}>To Do</MenuItem>
                   <MenuItem value={TaskStatus.IN_PROGRESS}>In Progress</MenuItem>
                   <MenuItem value={TaskStatus.IN_REVIEW}>In Review</MenuItem>
+                  
                 </Select>
               </FormControl>
               <FormControl fullWidth>
-                <InputLabel>Priority</InputLabel>
+                <InputLabel>Status</InputLabel>
                 <Select
-                  value={taskData.priority}
-                  label="Priority"
-                  onChange={(e) => setTaskData({ ...taskData, priority: e.target.value as TaskPriority })}
+                  value={taskData.status}
+                  label="Status"
+                  onChange={(e) => setTaskData({ ...taskData, status: e.target.value as TaskStatus })}
                   sx={{ borderRadius: 2 }}
                 >
-                  <MenuItem value={TaskPriority.LOW}>Low</MenuItem>
-                  <MenuItem value={TaskPriority.MEDIUM}>Medium</MenuItem>
-                  <MenuItem value={TaskPriority.HIGH}>High</MenuItem>
-                  <MenuItem value={TaskPriority.URGENT}>Urgent</MenuItem>
+                  <MenuItem value={TaskStatus.BACKLOG}>Backlog</MenuItem>
+                  <MenuItem value={TaskStatus.TODO}>To Do</MenuItem>
+                  <MenuItem value={TaskStatus.IN_PROGRESS}>In Progress</MenuItem>
+                  <MenuItem value={TaskStatus.IN_REVIEW}>In Review</MenuItem>
+                  <MenuItem value={TaskStatus.DONE}>Done</MenuItem> {/* Add this */}
                 </Select>
               </FormControl>
             </Box>

@@ -333,7 +333,6 @@ const RegisterForm: React.FC = () => {
                 left: 0,
                 right: 0,
                 height: '4px',
-                background: 'linear-gradient(90deg, #667eea 0%, #764ba2 100%)',
               },
             }}
           >
@@ -554,94 +553,94 @@ const RegisterForm: React.FC = () => {
                   />
                 </Grid>
 
-                {/* Password */}
-                <Grid item xs={12} sm={6}>
-                  <TextField
-                    required
-                    fullWidth
-                    name="password"
-                    label="Password"
-                    type={showPassword ? 'text' : 'password'}
-                    id="password"
-                    autoComplete="new-password"
-                    value={formData.password}
-                    onChange={handleChange}
-                    onBlur={handleBlur}
-                    error={touched.password && !!localErrors.password}
-                    helperText={touched.password && localErrors.password}
-                    InputProps={{
-                      startAdornment: (
-                        <InputAdornment position="start">
-                          <LockIcon color={touched.password && localErrors.password ? 'error' : 'action'} />
-                        </InputAdornment>
-                      ),
-                      endAdornment: (
-                        <InputAdornment position="end">
-                          <IconButton
-                            aria-label="toggle confirm password visibility"
-                            onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                            edge="end"
-                          >
-                            {showConfirmPassword ? <VisibilityIcon /> : <VisibilityOffIcon />}
-                          </IconButton>
-                        </InputAdornment>
-                      ),
-                    }}
-                    sx={{
-                      '& .MuiOutlinedInput-root': {
-                        borderRadius: 2,
-                        transition: 'all 0.3s ease',
-                        '&:hover': {
-                          transform: 'translateY(-1px)',
-                        },
+              {/* Password Field - FIXED */}
+              <Grid item xs={12} sm={6}>
+                <TextField
+                  required
+                  fullWidth
+                  name="password"
+                  label="Password"
+                  type={showPassword ? 'text' : 'password'}  // Use showPassword state
+                  id="password"
+                  autoComplete="new-password"
+                  value={formData.password}
+                  onChange={handleChange}
+                  onBlur={handleBlur}
+                  error={touched.password && !!localErrors.password}
+                  helperText={touched.password && localErrors.password}
+                  InputProps={{
+                    startAdornment: (
+                      <InputAdornment position="start">
+                        <LockIcon color={touched.password && localErrors.password ? 'error' : 'action'} />
+                      </InputAdornment>
+                    ),
+                    endAdornment: (
+                      <InputAdornment position="end">
+                        <IconButton
+                          aria-label="toggle password visibility"  // Correct label
+                          onClick={() => setShowPassword(!showPassword)}  // Correct state
+                          edge="end"
+                        >
+                          {showPassword ? <VisibilityIcon /> : <VisibilityOffIcon />} 
+                        </IconButton>
+                      </InputAdornment>
+                    ),
+                  }}
+                  sx={{
+                    '& .MuiOutlinedInput-root': {
+                      borderRadius: 2,
+                      transition: 'all 0.3s ease',
+                      '&:hover': {
+                        transform: 'translateY(-1px)',
                       },
-                    }}
-                  />
-                </Grid>
+                    },
+                  }}
+                />
+              </Grid>
 
-                {/* Confirm Password */}
-                <Grid item xs={12} sm={6}>
-                  <TextField
-                    required
-                    fullWidth
-                    name="password_confirm"
-                    label="Confirm Password"
-                    type={showConfirmPassword ? 'text' : 'password'}
-                    id="password_confirm"
-                    value={formData.password_confirm}
-                    onChange={handleChange}
-                    onBlur={handleBlur}
-                    error={touched.password_confirm && !!localErrors.password_confirm}
-                    helperText={touched.password_confirm && localErrors.password_confirm}
-                    InputProps={{
-                      startAdornment: (
-                        <InputAdornment position="start">
-                          <LockIcon color={touched.password_confirm && localErrors.password_confirm ? 'error' : 'action'} />
-                        </InputAdornment>
-                      ),
-                      endAdornment: (
-                        <InputAdornment position="end">
-                          <IconButton
-                            aria-label="toggle password visibility"
-                            onClick={() => setShowPassword(!showPassword)}
-                            edge="end"
-                          >
-                            {showPassword ? <VisibilityIcon /> : <VisibilityOffIcon />}
-                          </IconButton>
-                        </InputAdornment>
-                      ),
-                    }}
-                    sx={{
-                      '& .MuiOutlinedInput-root': {
-                        borderRadius: 2,
-                        transition: 'all 0.3s ease',
-                        '&:hover': {
-                          transform: 'translateY(-1px)',
-                        },
+              {/* Confirm Password Field - FIXED */}
+              <Grid item xs={12} sm={6}>
+                <TextField
+                  required
+                  fullWidth
+                  name="password_confirm"
+                  label="Confirm Password"
+                  type={showConfirmPassword ? 'text' : 'password'}  // Use showConfirmPassword state
+                  id="password_confirm"
+                  value={formData.password_confirm}
+                  onChange={handleChange}
+                  onBlur={handleBlur}
+                  error={touched.password_confirm && !!localErrors.password_confirm}
+                  helperText={touched.password_confirm && localErrors.password_confirm}
+                  InputProps={{
+                    startAdornment: (
+                      <InputAdornment position="start">
+                        <LockIcon color={touched.password_confirm && localErrors.password_confirm ? 'error' : 'action'} />
+                      </InputAdornment>
+                    ),
+                    endAdornment: (
+                      <InputAdornment position="end">
+                        <IconButton
+                          aria-label="toggle confirm password visibility"  // Correct label
+                          onClick={() => setShowConfirmPassword(!showConfirmPassword)}  // Correct state
+                          edge="end"
+                        >
+                          {showConfirmPassword ? <VisibilityIcon /> : <VisibilityOffIcon />} 
+                        </IconButton>
+                      </InputAdornment>
+                    ),
+                  }}
+                  sx={{
+                    '& .MuiOutlinedInput-root': {
+                      borderRadius: 2,
+                      transition: 'all 0.3s ease',
+                      '&:hover': {
+                        transform: 'translateY(-1px)',
                       },
-                    }}
-                  />
-                </Grid>
+                    },
+                  }}
+                />
+              </Grid>
               </Grid>
 
               {/* Submit Button */}

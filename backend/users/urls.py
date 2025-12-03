@@ -52,4 +52,20 @@ urlpatterns = [
     
     # Task Comments
     path('teams/<uuid:team_id>/projects/<uuid:project_id>/tasks/<uuid:task_id>/comments/', views.task_comments_view, name='task-comments'),
+
+    path('teams/<uuid:team_id>/join-request/', views.request_to_join_team_view, name='request-to-join-team'),
+    path('teams/<uuid:team_id>/join-requests/', views.team_join_requests_view, name='team-join-requests'),
+    path('teams/<uuid:team_id>/join-requests/<uuid:request_id>/approve/', views.approve_join_request_view, name='approve-join-request'),
+    path('teams/<uuid:team_id>/join-requests/<uuid:request_id>/reject/', views.reject_join_request_view, name='reject-join-request'),
+
+    path('teams/<uuid:team_id>/settings/', views.team_settings_view, name='team-settings'),
+    path('teams/<uuid:team_id>/settings/update/', views.update_team_setting_view, name='update-team-setting'),
+    path('teams/<uuid:team_id>/projects/<uuid:project_id>/transfer/', views.transfer_project_view, name='transfer-project'),
+    path('teams/<uuid:team_id>/activity/', views.team_activity_view, name='team-activity'),
+    path('teams/<uuid:team_id>/projects/<uuid:project_id>/activity/', views.project_activity_view, name='project-activity'),
+    path('teams/<uuid:team_id>/activity/recent/', views.recent_activity_view, name='recent-activity'),
+
+    path('teams/<uuid:team_id>/members/optimized/', views.team_members_optimized_view, name='team-members-optimized'),
+    path('teams/<uuid:team_id>/members/search/', views.search_team_members_view, name='search-team-members'),
+    path('teams/<uuid:team_id>/projects/create-optimized/', views.create_project_optimized, name='create-project-optimized'),
 ]

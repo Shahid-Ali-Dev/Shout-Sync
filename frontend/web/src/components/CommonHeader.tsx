@@ -613,6 +613,7 @@ const CommonHeader: React.FC<CommonHeaderProps> = ({
           sx={{ 
             ...getHeaderStyles(),
             zIndex: theme.zIndex.drawer + 1,
+            backgroundColor: 'white'
           }}
         >
           <Toolbar sx={{ 

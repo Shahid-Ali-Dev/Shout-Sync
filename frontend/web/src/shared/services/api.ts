@@ -1,9 +1,9 @@
 import axios from 'axios';
 
-const API_BASE_URL = 'http://localhost:8000/api';
+const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://127.0.0.1:8000';
 
 const api = axios.create({
-  baseURL: API_BASE_URL,
+  baseURL: `${API_BASE_URL}/api`,  // Remove /auth from here
   headers: {
     'Content-Type': 'application/json',
   },
@@ -46,12 +46,11 @@ export const authAPI = {
   rejectInvitation: (token: string) => api.post(`/auth/invitations/${token}/reject/`),
   getPendingInvitations: () => api.get('/auth/invitations/pending/'),
 
-    checkPendingInvitations: (email: string) => 
+  checkPendingInvitations: (email: string) => 
     api.get(`/auth/invitations/check-pending/?email=${email}`),
   
   acceptPendingInvitations: (email: string) => 
     api.post('/auth/invitations/accept-pending/', { email }),
 };
-
 
 export default api;

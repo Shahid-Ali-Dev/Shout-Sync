@@ -1,3 +1,4 @@
+// src/App.tsx
 import React, { useEffect, useState } from 'react';
 import { 
   BrowserRouter, 
@@ -23,7 +24,8 @@ import InvitationAccept from './components/InvitationAccept';
 import InvitationReject from './components/InvitationReject';
 import ProjectList from './components/ProjectList';
 import ProjectDetail from './components/ProjectDetail';
-
+import MainLayout from './Layout/MainLayout';
+import CreateTeamPage from './pages/CreateTeamPage';
 
 const theme = createTheme({
   palette: {
@@ -32,6 +34,51 @@ const theme = createTheme({
     },
     secondary: {
       main: '#7c3aed',
+    },
+    background: {
+      default: '#f8fafc',
+    },
+  },
+  typography: {
+    fontFamily: '"Inter", "Roboto", "Helvetica", "Arial", sans-serif',
+    h1: {
+      fontWeight: 700,
+    },
+    h2: {
+      fontWeight: 700,
+    },
+    h3: {
+      fontWeight: 600,
+    },
+    h4: {
+      fontWeight: 600,
+    },
+    h5: {
+      fontWeight: 600,
+    },
+    h6: {
+      fontWeight: 600,
+    },
+  },
+  shape: {
+    borderRadius: 8,
+  },
+  components: {
+    MuiButton: {
+      styleOverrides: {
+        root: {
+          textTransform: 'none',
+          fontWeight: 600,
+        },
+      },
+    },
+    MuiCard: {
+      styleOverrides: {
+        root: {
+          boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)',
+          border: '1px solid rgba(0, 0, 0, 0.05)',
+        },
+      },
     },
   },
 });
@@ -44,8 +91,33 @@ const AppRoutes: React.FC = () => {
   // Don't redirect if we're on team pages during loading
   if (loading) {
     return (
-      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
-        Loading...
+      <div style={{ 
+        display: 'flex', 
+        justifyContent: 'center', 
+        alignItems: 'center', 
+        height: '100vh',
+        backgroundColor: '#f8fafc'
+      }}>
+        <div style={{ textAlign: 'center' }}>
+          <div style={{ 
+            width: 40, 
+            height: 40, 
+            border: '4px solid #e5e7eb', 
+            borderTop: '4px solid #2563eb', 
+            borderRadius: '50%', 
+            animation: 'spin 1s linear infinite',
+            margin: '0 auto 16px'
+          }}></div>
+          <p style={{ color: '#6b7280', fontSize: '16px' }}>Loading...</p>
+        </div>
+        <style>
+          {`
+            @keyframes spin {
+              0% { transform: rotate(0deg); }
+              100% { transform: rotate(360deg); }
+            }
+          `}
+        </style>
       </div>
     );
   }
@@ -59,43 +131,128 @@ const AppRoutes: React.FC = () => {
       <Route path="/invitation/accept/:token" element={<InvitationAccept />} />
       <Route path="/invitation/reject/:token" element={<InvitationReject />} />
 
-      <Route
-        path="/team/:teamId/projects"
-        element={
-          isAuthenticated ? <ProjectList /> : <Navigate to="/login" replace />
-        }
-      />
-      <Route
-        path="/team/:teamId/project/:projectId"
-        element={
-          isAuthenticated ? <ProjectDetail /> : <Navigate to="/login" replace />
-        }
-      />
-      
-      {/* Protected routes */}
+      {/* Protected routes with MainLayout */}
       <Route
         path="/dashboard"
         element={
-          isAuthenticated ? <Dashboard /> : <Navigate to="/login" replace />
+          isAuthenticated ? (
+            <MainLayout>
+              <Dashboard />
+            </MainLayout>
+          ) : (
+            <Navigate to="/login" replace />
+          )
         }
       />
       <Route
         path="/team/:teamId"
         element={
-          isAuthenticated ? <TeamDetail /> : <Navigate to="/login" replace />
+          isAuthenticated ? (
+            <MainLayout>
+              <TeamDetail />
+            </MainLayout>
+          ) : (
+            <Navigate to="/login" replace />
+          )
         }
       />
       <Route
         path="/team/:teamId/settings"
         element={
-          isAuthenticated ? <TeamSettings /> : <Navigate to="/login" replace />
+          isAuthenticated ? (
+            <MainLayout>
+              <TeamSettings />
+            </MainLayout>
+          ) : (
+            <Navigate to="/login" replace />
+          )
         }
       />
-      
-      {/* Catch all route - redirect to home */}
-      <Route path="*" element={<Navigate to="/" replace />} />
+      <Route
+        path="/team/create"
+        element={
+          isAuthenticated ? (
+            <CreateTeamPage />
+          ) : (
+            <Navigate to="/login" replace />
+          )
+        }
+      />
+      <Route
+        path="/team/:teamId/projects"
+        element={
+          isAuthenticated ? (
+            <MainLayout>
+              <ProjectList />
+            </MainLayout>
+          ) : (
+            <Navigate to="/login" replace />
+          )
+        }
+      />
+      <Route
+        path="/team/:teamId/project/:projectId"
+        element={
+          isAuthenticated ? (
+            <MainLayout>
+              <ProjectDetail />
+            </MainLayout>
+          ) : (
+            <Navigate to="/login" replace />
+          )
+        }
+      />
+
+      {/* Additional routes that can be added later */}
+      {/* 
+      <Route
+        path="/projects"
+        element={
+          isAuthenticated ? (
+            <MainLayout>
+              <ProjectsPage />
+            </MainLayout>
+          ) : (
+            <Navigate to="/login" replace />
+          )
+        }
+      />
+      <Route
+        path="/my-work"
+        element={
+          isAuthenticated ? (
+            <MainLayout>
+              <MyWorkPage />
+            </MainLayout>
+          ) : (
+            <Navigate to="/login" replace />
+          )
+        }
+      />
+      <Route
+        path="/chat"
+        element={
+          isAuthenticated ? (
+            <MainLayout>
+              <ChatPage />
+            </MainLayout>
+          ) : (
+            <Navigate to="/login" replace />
+          )
+        }
+      />
+      */}
+
+      {/* Catch all route - redirect to dashboard if authenticated, home if not */}
+      <Route 
+        path="*" 
+        element={
+          isAuthenticated ? 
+            <Navigate to="/dashboard" replace /> : 
+            <Navigate to="/" replace />
+        } 
+      />
     </Routes>
-    
   );
 };
 
@@ -129,8 +286,33 @@ const AuthInitializer: React.FC<{ children: React.ReactNode }> = ({ children }) 
   // Show loading until auth is checked
   if (!authChecked) {
     return (
-      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
-        Loading...
+      <div style={{ 
+        display: 'flex', 
+        justifyContent: 'center', 
+        alignItems: 'center', 
+        height: '100vh',
+        backgroundColor: '#f8fafc'
+      }}>
+        <div style={{ textAlign: 'center' }}>
+          <div style={{ 
+            width: 40, 
+            height: 40, 
+            border: '4px solid #e5e7eb', 
+            borderTop: '4px solid #2563eb', 
+            borderRadius: '50%', 
+            animation: 'spin 1s linear infinite',
+            margin: '0 auto 16px'
+          }}></div>
+          <p style={{ color: '#6b7280', fontSize: '16px' }}>Initializing app...</p>
+        </div>
+        <style>
+          {`
+            @keyframes spin {
+              0% { transform: rotate(0deg); }
+              100% { transform: rotate(360deg); }
+            }
+          `}
+        </style>
       </div>
     );
   }
@@ -144,7 +326,7 @@ function App() {
       <ThemeProvider theme={theme}>
         <CssBaseline />
         <BrowserRouter future={{
-          v7_startTransition: true, // Add this line
+          v7_startTransition: true,
         }}>
           <AuthInitializer>
             <div className="App">

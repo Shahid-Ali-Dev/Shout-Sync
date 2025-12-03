@@ -188,7 +188,6 @@ const LoginForm: React.FC = () => {
                 left: 0,
                 right: 0,
                 height: '4px',
-                background: 'linear-gradient(90deg, #667eea 0%, #764ba2 100%)',
               },
             }}
           >

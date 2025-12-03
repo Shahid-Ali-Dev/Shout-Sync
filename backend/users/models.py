@@ -30,6 +30,7 @@ class Notification(models.Model):
         MENTION = 2, 'Mention'
         TASK_ASSIGNED = 3, 'Task Assigned'
         MESSAGE = 4, 'New Message'
+        JOIN_REQUEST = 5, 'Join Request'
     
     class Status(models.IntegerChoices):
         UNREAD = 1, 'Unread'
@@ -99,9 +100,63 @@ class Team(models.Model):
     created_by = models.ForeignKey('User', on_delete=models.CASCADE, related_name='created_teams')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-
+    
+    # Add settings fields
+    settings = models.JSONField(default=dict, blank=True)  # Store all settings as JSON
+    
     def __str__(self):
         return self.name
+
+    @property
+    def default_settings(self):
+        """Return default settings structure"""
+        return {
+            'security': {
+                'allow_public_invites': False,
+                'require_approval': True,
+                'default_role': 3,  # Member
+                'allow_guest_access': False,
+            },
+            'features': {
+                'enable_team_analytics': True,
+                'enable_file_sharing': True,
+                'max_file_size': 100,  # MB
+                'enable_team_chat': True,
+            },
+            'permissions': {
+                'members_can_create_projects': False,
+                'members_can_invite': False,
+                'guests_can_view': True,
+            }
+        }
+
+    def get_setting(self, path, default=None):
+        """Get a specific setting value using dot notation"""
+        keys = path.split('.')
+        value = self.settings
+        for key in keys:
+            if isinstance(value, dict) and key in value:
+                value = value[key]
+            else:
+                return default
+        return value
+
+    def update_setting(self, path, value):
+        """Update a specific setting using dot notation"""
+        keys = path.split('.')
+        settings = self.settings.copy()
+        current = settings
+        
+        # Navigate to the parent of the final key
+        for key in keys[:-1]:
+            if key not in current:
+                current[key] = {}
+            current = current[key]
+        
+        # Set the final value
+        current[keys[-1]] = value
+        self.settings = settings
+        self.save()
 
 class TeamMember(models.Model):
     class Role(models.IntegerChoices):
@@ -143,7 +198,6 @@ class TeamInvitation(models.Model):
     def __str__(self):
         return f"{self.email} - {self.team.name}"
 
-# NEW MODELS FOR PHASE 1 - PROJECT MANAGEMENT
 class Project(models.Model):
     class Status(models.IntegerChoices):
         PLANNING = 1, 'Planning'
@@ -160,6 +214,12 @@ class Project(models.Model):
     end_date = models.DateTimeField()
     status = models.IntegerField(choices=Status.choices, default=Status.PLANNING)
     created_by = models.ForeignKey('User', on_delete=models.CASCADE, related_name='created_projects')
+    assignees = models.ManyToManyField(
+        'User', 
+        through='ProjectAssignee', 
+        related_name='assigned_projects',
+        through_fields=('project', 'user')  
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -168,6 +228,27 @@ class Project(models.Model):
 
     def __str__(self):
         return f"{self.name} - {self.team.name}"
+    
+class ProjectAssignee(models.Model):
+    """Intermediate model for project assignees with role"""
+    class AssigneeRole(models.IntegerChoices):
+        CONTRIBUTOR = 1, 'Contributor'
+        MANAGER = 2, 'Manager'
+        LEAD = 3, 'Lead'
+    
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    project = models.ForeignKey('Project', on_delete=models.CASCADE, related_name='assignee_relations')
+    user = models.ForeignKey('User', on_delete=models.CASCADE, related_name='project_assignee_relations')
+    role = models.IntegerField(choices=AssigneeRole.choices, default=AssigneeRole.CONTRIBUTOR)
+    assigned_by = models.ForeignKey('User', on_delete=models.CASCADE, related_name='assigned_project_members')
+    assigned_at = models.DateTimeField(auto_now_add=True)
+    is_lead = models.BooleanField(default=False)
+    
+    class Meta:
+        unique_together = ['project', 'user']
+    
+    def __str__(self):
+        return f"{self.user.email} - {self.project.name} ({self.get_role_display()})"
 
 class ProjectMember(models.Model):
     class Role(models.IntegerChoices):
@@ -397,3 +478,175 @@ class SheetComment(models.Model):
 
     class Meta:
         ordering = ['-created_at']
+
+class TeamJoinRequest(models.Model):
+    class Status(models.IntegerChoices):
+        PENDING = 1, 'Pending'
+        APPROVED = 2, 'Approved'
+        REJECTED = 3, 'Rejected'
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    email = models.EmailField()
+    team = models.ForeignKey('Team', on_delete=models.CASCADE, related_name='join_requests')
+    user = models.ForeignKey('User', on_delete=models.CASCADE, null=True, blank=True, related_name='join_requests')
+    message = models.TextField(blank=True, null=True)
+    status = models.IntegerField(choices=Status.choices, default=Status.PENDING)
+    created_at = models.DateTimeField(auto_now_add=True)
+    processed_by = models.ForeignKey('User', on_delete=models.SET_NULL, null=True, blank=True, related_name='processed_join_requests')
+    processed_at = models.DateTimeField(null=True, blank=True)
+
+    def __str__(self):
+        return f"{self.email} - {self.team.name}"
+    
+# models.py - Add these models
+class UserActivity(models.Model):
+    class ActivityType(models.IntegerChoices):
+        TASK_CREATED = 1, 'Task Created'
+        TASK_COMPLETED = 2, 'Task Completed'
+        PROJECT_CREATED = 3, 'Project Created'
+        TEAM_JOINED = 4, 'Team Joined'
+        COMMENT_ADDED = 5, 'Comment Added'
+        FILE_UPLOADED = 6, 'File Uploaded'
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey('User', on_delete=models.CASCADE, related_name='activities')
+    type = models.IntegerField(choices=ActivityType.choices)
+    action = models.CharField(max_length=255)
+    details = models.JSONField(default=dict, blank=True)
+    entity_id = models.UUIDField(null=True, blank=True)
+    entity_type = models.CharField(max_length=50, blank=True, null=True)
+    timestamp = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-timestamp']
+        indexes = [
+            models.Index(fields=['user', 'timestamp']),
+        ]
+
+    def __str__(self):
+        return f"{self.user.email} - {self.get_type_display()}"
+
+class UserProductivity(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey('User', on_delete=models.CASCADE, related_name='productivity_metrics')
+    date = models.DateField()
+    tasks_completed = models.IntegerField(default=0)
+    tasks_created = models.IntegerField(default=0)
+    time_spent = models.IntegerField(default=0)  # in minutes
+    productivity_score = models.FloatField(default=0.0)
+    
+    class Meta:
+        unique_together = ['user', 'date']
+        ordering = ['-date']
+
+class ProjectTemplate(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(max_length=255)
+    description = models.TextField(blank=True, null=True)
+    category = models.CharField(max_length=100, default='General')
+    template_data = models.JSONField(default=dict)  # Pre-configured projects/tasks
+    is_public = models.BooleanField(default=True)
+    created_by = models.ForeignKey('User', on_delete=models.CASCADE)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return self.name
+
+class ActivityLog(models.Model):
+    class ActionType(models.IntegerChoices):
+        PROJECT_CREATED = 1, 'Project Created'  # ADD THIS FIRST
+        PROJECT_TRANSFERRED = 2, 'Project Transferred'
+        PROJECT_UPDATED = 3, 'Project Updated'
+        PROJECT_DELETED = 4, 'Project Deleted'
+        TASK_CREATED = 5, 'Task Created'
+        TASK_UPDATED = 6, 'Task Updated'
+        TASK_DELETED = 7, 'Task Deleted'
+        TEAM_JOINED = 8, 'Team Joined'
+        MEMBER_ADDED = 9, 'Member Added'
+        MEMBER_REMOVED = 10, 'Member Removed'
+    
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey('User', on_delete=models.CASCADE, related_name='activity_logs')
+    team = models.ForeignKey('Team', on_delete=models.CASCADE, related_name='activities', null=True, blank=True)
+    project = models.ForeignKey('Project', on_delete=models.CASCADE, related_name='activities', null=True, blank=True)
+    action_type = models.IntegerField(choices=ActionType.choices)
+    description = models.TextField()
+    details = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        ordering = ['-created_at']
+    
+    def __str__(self):
+        return f"{self.user.email} - {self.get_action_type_display()} - {self.created_at}"
+
+# Add to models.py, after ProjectMember model
+class ProjectPermission(models.Model):
+    """Fine-grained permissions for project access and editing"""
+    class PermissionLevel(models.IntegerChoices):
+        VIEW_ONLY = 1, 'View Only'
+        EDIT_BASIC = 2, 'Edit Basic Info'
+        EDIT_ALL = 3, 'Edit All'
+        ADMIN = 4, 'Admin'
+    
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    project = models.ForeignKey('Project', on_delete=models.CASCADE, related_name='permissions')
+    user = models.ForeignKey('User', on_delete=models.CASCADE, related_name='project_permissions')
+    level = models.IntegerField(choices=PermissionLevel.choices, default=PermissionLevel.VIEW_ONLY)
+    can_edit_name = models.BooleanField(default=False)
+    can_edit_description = models.BooleanField(default=False)
+    can_edit_dates = models.BooleanField(default=False)
+    can_edit_status = models.BooleanField(default=False)
+    can_assign_tasks = models.BooleanField(default=False)
+    can_manage_members = models.BooleanField(default=False)
+    can_transfer_project = models.BooleanField(default=False)
+    can_delete_project = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ['project', 'user']
+    
+    def __str__(self):
+        return f"{self.user.email} - {self.project.name} ({self.get_level_display()})"
+
+    def save(self, *args, **kwargs):
+        # Auto-set permissions based on level
+        if self.level == self.PermissionLevel.VIEW_ONLY:
+            self.can_edit_name = False
+            self.can_edit_description = False
+            self.can_edit_dates = False
+            self.can_edit_status = False
+            self.can_assign_tasks = False
+            self.can_manage_members = False
+            self.can_transfer_project = False
+            self.can_delete_project = False
+        elif self.level == self.PermissionLevel.EDIT_BASIC:
+            self.can_edit_name = True
+            self.can_edit_description = True
+            self.can_edit_dates = True
+            self.can_edit_status = True
+            self.can_assign_tasks = True
+            self.can_manage_members = False
+            self.can_transfer_project = False
+            self.can_delete_project = False
+        elif self.level == self.PermissionLevel.EDIT_ALL:
+            self.can_edit_name = True
+            self.can_edit_description = True
+            self.can_edit_dates = True
+            self.can_edit_status = True
+            self.can_assign_tasks = True
+            self.can_manage_members = True
+            self.can_transfer_project = False
+            self.can_delete_project = False
+        elif self.level == self.PermissionLevel.ADMIN:
+            self.can_edit_name = True
+            self.can_edit_description = True
+            self.can_edit_dates = True
+            self.can_edit_status = True
+            self.can_assign_tasks = True
+            self.can_manage_members = True
+            self.can_transfer_project = True
+            self.can_delete_project = True
+        
+        super().save(*args, **kwargs)

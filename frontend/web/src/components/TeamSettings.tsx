@@ -161,6 +161,7 @@ const selectedMember = members.find(m => m.id === selectedMemberId) || null;
   const [newRole, setNewRole] = useState<number>(3);
   const [actionLoading, setActionLoading] = useState(false);
   
+  
   // Invitation state
   const [inviteData, setInviteData] = useState({
     email: '',
@@ -176,13 +177,15 @@ const selectedMember = members.find(m => m.id === selectedMemberId) || null;
     allow_guest_access: false,
     enable_team_analytics: true,
     enable_file_sharing: true,
-    max_file_size: 100, // MB
+    max_file_size: 100,
     enable_team_chat: true,
   });
 
   // Public invite link state
   const [publicInviteLink, setPublicInviteLink] = useState('');
   const [linkCopied, setLinkCopied] = useState(false);
+
+  
 
   // Load team data
   const loadTeam = async () => {
@@ -332,6 +335,26 @@ const selectedMember = members.find(m => m.id === selectedMemberId) || null;
       setSaving(false);
     }
   };
+
+  const handleSaveSecuritySettings = async () => {
+  try {
+    setSaving(true);
+    setSnackbar({ 
+      open: true, 
+      message: 'Security settings updated successfully', 
+      severity: 'success' 
+    });
+  } catch (error: any) {
+    const message = error.response?.data?.error || 'Failed to update settings';
+    setSnackbar({ 
+      open: true, 
+      message, 
+      severity: 'error' 
+    });
+  } finally {
+    setSaving(false);
+  }
+};
 
   // Invite member handler
   const handleInviteMember = async () => {

@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+// src/components/ProjectList.tsx
+import React, { useState, useEffect, useMemo } from 'react';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import {
   Box,
   Typography,
@@ -24,18 +25,18 @@ import {
   Alert,
   Snackbar,
   CircularProgress,
-  alpha,
   ListItemIcon,
   Fab,
   Tooltip,
-  Badge,
   Divider,
-  Avatar,
-  AvatarGroup,
   InputAdornment,
-  CardActionArea,
   useTheme,
   useMediaQuery,
+  LinearProgress,
+  Badge,
+  Tabs,
+  Tab,
+  Drawer,
 } from '@mui/material';
 import {
   Add as AddIcon,
@@ -43,80 +44,76 @@ import {
   Groups as GroupsIcon,
   Assignment as TaskIcon,
   CalendarToday as CalendarIcon,
-  Person as PersonIcon,
+  TrendingUp as TrendingIcon,
+  Lightbulb as Lightbulb,
   Folder as FolderIcon,
   Delete as DeleteIcon,
   Settings as SettingsIcon,
   Search as SearchIcon,
-  FilterList as FilterIcon,
   Sort as SortIcon,
   Dashboard as DashboardIcon,
   ViewModule as GridIcon,
   ViewList as ListIcon,
   Refresh as RefreshIcon,
   CheckCircle as CheckCircleIcon,
-  Schedule as ScheduleIcon,
   Pause as PauseIcon,
   Cancel as CancelIcon,
   PlayArrow as PlayIcon,
   Edit as EditIcon,
-  Share as ShareIcon,
   Archive as ArchiveIcon,
-  Rocket as RocketIcon,
   Lightbulb as PlanningIcon,
-  TrendingUp as TrendingIcon,
+  TrendingFlat as TrendingFlatIcon,
+  TrendingUp as TrendingUpIcon,
+  Bolt as BoltIcon,
+  Star as StarIcon,
+  StarBorder as StarBorderIcon,
+  Clear as ClearIcon,
+  GroupWork as GroupWorkIcon,
+  FilterList as FilterIcon,
+  Tune as TuneIcon,
+  ViewCompact as CompactIcon,
 } from '@mui/icons-material';
 import { useSelector } from 'react-redux';
 import { RootState } from '../shared/store/store';
 import { projectAPI } from '../shared/services/projectAPI';
-import { Project, ProjectStatus } from '../shared/types/projectTypes';
+import { teamAPI } from '../shared/services/teamAPI';
 import CommonHeader from '../components/CommonHeader';
+import CreateProjectDialog from '../components/dialogs/CreateProjectDialog';
+import EditProjectDialog from '../components/dialogs/EditProjectDialog';
+import QuickActionsMenu from '../components/QuickActionsMenu';
 
-// Enhanced Project Status Configuration
-const PROJECT_STATUS_CONFIG: Record<number, ProjectStatusConfig> = {
-  [ProjectStatus.PLANNING]: {
-    label: 'Planning',
-    color: 'default',
-    icon: <PlanningIcon fontSize="small" />,
-    bgColor: 'grey.50',
-    textColor: 'grey.700'
-  },
-  [ProjectStatus.ACTIVE]: {
-    label: 'Active',
-    color: 'success',
-    icon: <PlayIcon fontSize="small" />,
-    bgColor: 'success.50',
-    textColor: 'success.700'
-  },
-  [ProjectStatus.ON_HOLD]: {
-    label: 'On Hold',
-    color: 'warning',
-    icon: <PauseIcon fontSize="small" />,
-    bgColor: 'warning.50',
-    textColor: 'warning.700'
-  },
-  [ProjectStatus.COMPLETED]: {
-    label: 'Completed',
-    color: 'info',
-    icon: <CheckCircleIcon fontSize="small" />,
-    bgColor: 'info.50',
-    textColor: 'info.700'
-  },
-  [ProjectStatus.CANCELLED]: {
-    label: 'Cancelled',
-    color: 'error',
-    icon: <CancelIcon fontSize="small" />,
-    bgColor: 'error.50',
-    textColor: 'error.700'
-  },
-  [ProjectStatus.ARCHIVED]: {
-    label: 'Archived',
-    color: 'default',
-    icon: <ArchiveIcon fontSize="small" />,
-    bgColor: 'grey.100',
-    textColor: 'grey.600'
-  },
-};
+// --- Types & Config ---
+
+interface Project {
+  id: string;
+  name: string;
+  description?: string;
+  start_date: string;
+  end_date: string;
+  status: number;
+  created_by: string;
+  created_by_name: string;
+  members: any[];
+  member_count: number;
+  task_count: number;
+  created_at: string;
+  updated_at: string;
+  team?: string;
+  team_name?: string;
+  progress?: number;
+  days_remaining?: number;
+  is_favorite?: boolean;
+  priority?: number;
+}
+
+enum ProjectStatus {
+  PLANNING = 1,
+  ACTIVE = 2,
+  ON_HOLD = 3,
+  COMPLETED = 4,
+  CANCELLED = 5,
+  ARCHIVED = 6
+}
 
 interface ProjectStats {
   total: number;
@@ -134,48 +131,702 @@ interface ProjectStatusConfig {
   icon: React.ReactElement;
   bgColor: string;
   textColor: string;
+  description: string;
+  iconColor: string;
 }
+
+interface Team {
+  id: string;
+  name: string;
+  description?: string;
+  member_count: number;
+}
+
+interface PriorityConfig {
+  label: string;
+  color: 'default' | 'primary' | 'secondary' | 'error' | 'info' | 'success' | 'warning';
+  icon: React.ReactElement;
+}
+
+type EnhancedProject = Project & {
+  progress?: number;
+  daysRemaining?: number;
+  team_name?: string;
+  team_id?: string;
+  member_count: number;
+  task_count: number;
+  is_favorite?: boolean;
+  priority?: number;
+};
+
+const PROJECT_STATUS_CONFIG: Record<number, ProjectStatusConfig> = {
+  [ProjectStatus.PLANNING]: {
+    label: 'Planning',
+    color: 'default',
+    icon: <PlanningIcon fontSize="small" />,
+    bgColor: 'grey.50',
+    textColor: 'grey.700',
+    description: 'Project is in planning phase',
+    iconColor: '#6B7280'
+  },
+  [ProjectStatus.ACTIVE]: {
+    label: 'Active',
+    color: 'success',
+    icon: <PlayIcon fontSize="small" />,
+    bgColor: 'success.50',
+    textColor: 'success.700',
+    description: 'Project is actively being worked on',
+    iconColor: '#10B981'
+  },
+  [ProjectStatus.ON_HOLD]: {
+    label: 'On Hold',
+    color: 'warning',
+    icon: <PauseIcon fontSize="small" />,
+    bgColor: 'warning.50',
+    textColor: 'warning.700',
+    description: 'Project is temporarily paused',
+    iconColor: '#F59E0B'
+  },
+  [ProjectStatus.COMPLETED]: {
+    label: 'Completed',
+    color: 'info',
+    icon: <CheckCircleIcon fontSize="small" />,
+    bgColor: 'info.50',
+    textColor: 'info.700',
+    description: 'Project has been completed',
+    iconColor: '#3B82F6'
+  },
+  [ProjectStatus.CANCELLED]: {
+    label: 'Cancelled',
+    color: 'error',
+    icon: <CancelIcon fontSize="small" />,
+    bgColor: 'error.50',
+    textColor: 'error.700',
+    description: 'Project has been cancelled',
+    iconColor: '#EF4444'
+  },
+  [ProjectStatus.ARCHIVED]: {
+    label: 'Archived',
+    color: 'default',
+    icon: <ArchiveIcon fontSize="small" />,
+    bgColor: 'grey.100',
+    textColor: 'grey.600',
+    description: 'Project has been archived',
+    iconColor: '#9CA3AF'
+  },
+};
+
+const PRIORITY_CONFIG: Record<number, PriorityConfig> = {
+  1: { 
+    label: 'Low', 
+    color: 'success', 
+    icon: <TrendingFlatIcon fontSize="small" /> 
+  },
+  2: { 
+    label: 'Medium', 
+    color: 'warning', 
+    icon: <TrendingUpIcon fontSize="small" /> 
+  },
+  3: { 
+    label: 'High', 
+    color: 'error', 
+    icon: <BoltIcon fontSize="small" /> 
+  },
+  4: { 
+    label: 'Critical', 
+    color: 'error', 
+    icon: <BoltIcon fontSize="small" /> 
+  },
+};
+
+// --- UTILITY FUNCTIONS (MOVED OUTSIDE) ---
+const formatDate = (dateString: string) => {
+  return new Date(dateString).toLocaleDateString('en-US', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric'
+  });
+};
+
+const getDaysRemaining = (endDate: string) => {
+  const end = new Date(endDate);
+  const today = new Date();
+  const diffTime = end.getTime() - today.getTime();
+  const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+  return diffDays;
+};
+
+const getProgressColor = (days: number) => {
+  if (days < 0) return 'error';
+  if (days < 7) return 'warning';
+  return 'success';
+};
+
+// --- ENHANCED COMPONENTS ---
+
+// 1. Enhanced Project Card Component - Optimized for mobile
+const ProjectCard = ({ 
+  project, 
+  onMenuOpen, 
+  onToggleFavorite,
+  isAllProjectsView,
+  compact = false
+}: { 
+  project: EnhancedProject,
+  onMenuOpen: (e: React.MouseEvent<HTMLElement>, p: EnhancedProject) => void,
+  onToggleFavorite: (p: EnhancedProject, e: React.MouseEvent) => void,
+  isAllProjectsView: boolean,
+  compact?: boolean
+}) => {
+  const navigate = useNavigate();
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
+
+  return (
+    <Card 
+      sx={{ 
+        cursor: 'pointer',
+        transition: 'all 0.3s ease',
+        borderRadius: 2,
+        backgroundColor: 'white',
+        border: '1px solid',
+        borderColor: 'divider',
+        height: '100%',
+        display: 'flex',
+        flexDirection: 'column',
+        minHeight: compact ? 280 : 320,
+        '&:hover': {
+          transform: 'translateY(-2px)',
+          boxShadow: '0 8px 25px rgba(0, 0, 0, 0.12)',
+          borderColor: 'primary.main'
+        }
+      }}
+    >
+      <CardContent sx={{ 
+        p: compact ? 2 : 2.5, 
+        flex: 1, 
+        display: 'flex', 
+        flexDirection: 'column',
+        '&:last-child': { pb: compact ? 2 : 2.5 }
+      }}>
+
+        {/* Header with Favorite, Status, Priority, and Menu - FIXED ALIGNMENT */}
+        <Box sx={{ 
+          display: 'flex', 
+          justifyContent: 'space-between', 
+          alignItems: 'center', 
+          mb: 1.5, 
+          gap: 0.5,
+          minHeight: 32 // Fixed height for consistent alignment
+        }}>
+          {/* Left side: Favorite + Status */}
+          <Box sx={{ 
+            display: 'flex', 
+            alignItems: 'center', 
+            gap: 0.5,
+            flex: 1 
+          }}>
+            <IconButton
+              size="small"
+              onClick={(e) => onToggleFavorite(project, e)}
+              sx={{ 
+                color: project.is_favorite ? 'warning.main' : 'grey.400',
+                p: 0.5,
+                '&:hover': { backgroundColor: 'warning.50' },
+                alignSelf: 'flex-start', // Align to top
+                mt: 1.5 // Small top margin to align with chips
+              }}
+            >
+              <StarIcon sx={{ fontSize: compact ? 18 : 20 }} />
+            </IconButton>
+            
+            <Chip
+              icon={React.cloneElement(PROJECT_STATUS_CONFIG[project.status]?.icon, {
+                sx: { 
+                  color: PROJECT_STATUS_CONFIG[project.status]?.iconColor,
+                  fontSize: compact ? 14 : 16
+                }
+              })}
+              label={!isMobile ? PROJECT_STATUS_CONFIG[project.status]?.label : PROJECT_STATUS_CONFIG[project.status]?.label.slice(0, 3)}
+              color={PROJECT_STATUS_CONFIG[project.status]?.color}
+              size="small"
+              sx={{ 
+                fontWeight: '600', 
+                borderRadius: 1,
+                height: compact ? 24 : 28,
+                fontSize: compact ? '0.7rem' : '0.75rem',
+                alignSelf: 'flex-start', // Align to top
+                mt: 0.5 // Match favorite button alignment
+              }}
+            />
+          </Box>
+          
+          {/* Right side: Priority + Menu - Now properly aligned in single row */}
+          <Box sx={{ 
+            display: 'flex', 
+            alignItems: 'center', 
+            gap: 0.5,
+            height: '100%' // Take full height
+          }}>
+            {/* Priority Badge - Show ALL priorities */}
+            {project.priority && (
+              <Tooltip title={PRIORITY_CONFIG[project.priority].label}>
+                <Chip
+                  icon={PRIORITY_CONFIG[project.priority].icon}
+                  label={!isMobile ? PRIORITY_CONFIG[project.priority].label : ''}
+                  color={PRIORITY_CONFIG[project.priority].color as any}
+                  size="small"
+                  sx={{ 
+                    fontWeight: '600', 
+                    borderRadius: 1,
+                    height: compact ? 24 : 28,
+                    fontSize: compact ? '0.7rem' : '0.75rem',
+                    minWidth: isMobile ? 32 : 'auto',
+                    alignSelf: 'flex-start', // Align to top
+                    mt: 0.5 // Match status chip alignment
+                  }}
+                />
+              </Tooltip>
+            )}
+            
+            <IconButton
+              size="small"
+              onClick={(e) => onMenuOpen(e, project)}
+              sx={{ 
+                '&:hover': { backgroundColor: 'action.hover' },
+                width: compact ? 30 : 36,
+                height: compact ? 30 : 36,
+                alignSelf: 'flex-start', // Align to top
+                mt: 0.5 // Match chips alignment
+              }}
+            >
+              <MoreIcon sx={{ fontSize: compact ? 18 : 20 }} />
+            </IconButton>
+          </Box>
+        </Box>
+
+        {/* Project Title and Description */}
+        <Box 
+          onClick={() => navigate(`/team/${project.team_id}/project/${project.id}`)}
+          sx={{ cursor: 'pointer', flex: 1 }}
+        >
+          <Typography 
+            variant={compact ? "subtitle1" : "h6"}
+            component="h2" 
+            sx={{ 
+              mb: 1.5,
+              fontWeight: '700',
+              lineHeight: 1.3,
+              display: '-webkit-box',
+              WebkitLineClamp: 2,
+              WebkitBoxOrient: 'vertical',
+              overflow: 'hidden',
+              minHeight: compact ? '2.4em' : '2.6em',
+              fontSize: compact ? '1rem' : '1.125rem'
+            }}
+          >
+            {project.name}
+          </Typography>
+
+          {!compact && (
+            <Typography 
+              variant="body2" 
+              color="text.secondary" 
+              sx={{ 
+                mb: 2,
+                lineHeight: 1.4,
+                display: '-webkit-box',
+                WebkitLineClamp: 2,
+                WebkitBoxOrient: 'vertical',
+                overflow: 'hidden',
+                minHeight: '2.8em'
+              }}
+            >
+              {project.description || 'No description provided'}
+            </Typography>
+          )}
+
+          {/* Progress Bar */}
+          <Box sx={{ mb: 2 }}>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
+              <Typography variant="caption" color="text.secondary" fontWeight="500">
+                Progress
+              </Typography>
+              <Typography variant="caption" fontWeight="600" color="primary.main">
+                {project.progress || 0}%
+              </Typography>
+            </Box>
+            <LinearProgress 
+              variant="determinate" 
+              value={project.progress || 0} 
+              sx={{ 
+                height: 4,
+                borderRadius: 2,
+                backgroundColor: 'grey.200',
+                '& .MuiLinearProgress-bar': {
+                  borderRadius: 2,
+                }
+              }}
+            />
+          </Box>
+
+          {/* Timeline */}
+          <Box sx={{ mb: 2 }}>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 0.5 }}>
+              <Typography variant="caption" color="text.secondary" fontWeight="500">
+                Timeline
+              </Typography>
+              {project.end_date && (
+                <Chip
+                  label={`${project.daysRemaining}d`}
+                  size="small"
+                  color={getProgressColor(project.daysRemaining || 0) as any}
+                  variant="outlined"
+                  sx={{ 
+                    fontWeight: '500',
+                    height: 20,
+                    fontSize: '0.65rem'
+                  }}
+                />
+              )}
+            </Box>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+              <CalendarIcon sx={{ color: 'text.secondary', fontSize: 14 }} />
+              <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem' }}>
+                {formatDate(project.start_date)} - {formatDate(project.end_date)}
+              </Typography>
+            </Box>
+          </Box>
+        </Box>
+
+        {/* Footer Stats - Compact version */}
+        <Box sx={{ 
+          display: 'flex', 
+          justifyContent: 'space-between', 
+          alignItems: 'center',
+          pt: 1.5,
+          borderTop: '1px solid',
+          borderColor: 'divider',
+          mt: 'auto'
+        }}>
+          <Tooltip title="Team members">
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+              <GroupsIcon sx={{ color: 'text.secondary', fontSize: 16 }} />
+              <Typography variant="caption" color="text.secondary" fontWeight="500">
+                {project.member_count}
+              </Typography>
+            </Box>
+          </Tooltip>
+
+          <Tooltip title="Tasks">
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+              <TaskIcon sx={{ color: 'text.secondary', fontSize: 16 }} />
+              <Typography variant="caption" color="text.secondary" fontWeight="500">
+                {project.task_count}
+              </Typography>
+            </Box>
+          </Tooltip>
+
+          {isAllProjectsView && project.team_name && (
+            <Tooltip title={project.team_name}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                <GroupWorkIcon sx={{ color: 'text.secondary', fontSize: 14 }} />
+                {!isMobile && (
+                  <Typography variant="caption" color="text.secondary" fontWeight="500" sx={{ maxWidth: 60, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {project.team_name}
+                  </Typography>
+                )}
+              </Box>
+            </Tooltip>
+          )}
+        </Box>
+      </CardContent>
+    </Card>
+  );
+};
+
+// 2. Enhanced Project List Item Component
+const ProjectListItem = ({ 
+  project, 
+  onMenuOpen, 
+  onToggleFavorite,
+  isAllProjectsView 
+}: { 
+  project: EnhancedProject,
+  onMenuOpen: (e: React.MouseEvent<HTMLElement>, p: EnhancedProject) => void,
+  onToggleFavorite: (p: EnhancedProject, e: React.MouseEvent) => void,
+  isAllProjectsView: boolean
+}) => {
+  const navigate = useNavigate();
+  const isMobile = useMediaQuery('(max-width: 600px)');
+
+  return (
+    <Paper 
+      sx={{ 
+        borderRadius: 2,
+        backgroundColor: 'white',
+        border: '1px solid',
+        borderColor: 'divider',
+        mb: 1.5,
+        transition: 'all 0.2s ease',
+        '&:hover': {
+          boxShadow: '0 4px 12px rgba(0, 0, 0, 0.1)',
+          borderColor: 'primary.main'
+        }
+      }}
+    >
+      <Box 
+        sx={{ 
+          p: isMobile ? 2 : 2.5, 
+          display: 'flex', 
+          alignItems: 'center', 
+          gap: isMobile ? 2 : 3, 
+          cursor: 'pointer' 
+        }}
+        onClick={() => navigate(`/team/${project.team_id}/project/${project.id}`)}
+      >
+        <Box sx={{ flex: 1, minWidth: 0 }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 1, flexWrap: 'wrap' }}>
+            <Typography variant="h6" fontWeight="600" sx={{ flex: 1, minWidth: isMobile ? 120 : 200, fontSize: isMobile ? '1rem' : '1.125rem' }}>
+              {project.name}
+            </Typography>
+            <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', flexWrap: 'wrap' }}>
+              <Chip
+                icon={React.cloneElement(PROJECT_STATUS_CONFIG[project.status]?.icon, {
+                  sx: { color: PROJECT_STATUS_CONFIG[project.status]?.iconColor }
+                })}
+                label={PROJECT_STATUS_CONFIG[project.status]?.label}
+                color={PROJECT_STATUS_CONFIG[project.status]?.color}
+                size="small"
+                sx={{ fontWeight: '600' }}
+              />
+              {project.priority && (
+                <Chip
+                  icon={PRIORITY_CONFIG[project.priority].icon}
+                  label={PRIORITY_CONFIG[project.priority].label}
+                  color={PRIORITY_CONFIG[project.priority].color as any}
+                  size="small"
+                  sx={{ fontWeight: '600' }}
+                />
+              )}
+              {isAllProjectsView && project.team_name && !isMobile && (
+                <Chip label={project.team_name} size="small" variant="outlined" sx={{ fontWeight: '500' }} />
+              )}
+            </Box>
+          </Box>
+          
+          {project.description && !isMobile && (
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>{project.description}</Typography>
+          )}
+
+          <Box sx={{ display: 'flex', gap: isMobile ? 2 : 4, flexWrap: 'wrap', alignItems: 'center' }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+              <CalendarIcon sx={{ color: 'text.secondary', fontSize: 14 }} />
+              <Typography variant="caption" color="text.secondary">
+                {formatDate(project.start_date)} - {formatDate(project.end_date)}
+              </Typography>
+            </Box>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+              <GroupsIcon sx={{ color: 'text.secondary', fontSize: 14 }} />
+              <Typography variant="caption" color="text.secondary">
+                {project.member_count} members
+              </Typography>
+            </Box>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+              <TaskIcon sx={{ color: 'text.secondary', fontSize: 14 }} />
+              <Typography variant="caption" color="text.secondary">
+                {project.task_count} tasks
+              </Typography>
+            </Box>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+              <TrendingIcon sx={{ color: 'text.secondary', fontSize: 14 }} />
+              <Typography variant="caption" color="text.secondary" fontWeight="500">
+                {project.progress || 0}% complete
+              </Typography>
+            </Box>
+          </Box>
+        </Box>
+
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+          <IconButton 
+            size="small" 
+            onClick={(e) => onToggleFavorite(project, e)} 
+            sx={{ color: project.is_favorite ? 'warning.main' : 'grey.400' }}
+          >
+            <StarIcon />
+          </IconButton>
+          <IconButton 
+            onClick={(e) => onMenuOpen(e, project)} 
+            sx={{ '&:hover': { backgroundColor: 'action.hover' } }}
+          >
+            <MoreIcon />
+          </IconButton>
+        </Box>
+      </Box>
+    </Paper>
+  );
+};
+
+// 3. Filter Drawer Component for Mobile
+const FilterDrawer = ({ 
+  open, 
+  onClose, 
+  filters,
+  onFilterChange,
+  teams,
+  isAllProjectsView 
+}: {
+  open: boolean;
+  onClose: () => void;
+  filters: any;
+  onFilterChange: (key: string, value: any) => void;
+  teams: Team[];
+  isAllProjectsView: boolean;
+}) => {
+  return (
+    <Drawer
+      anchor="right"
+      open={open}
+      onClose={onClose}
+      sx={{
+        '& .MuiDrawer-paper': {
+          width: 300,
+          p: 3
+        }
+      }}
+    >
+      <Typography variant="h6" gutterBottom>
+        Filters
+      </Typography>
+      
+      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3, mt: 2 }}>
+        <FormControl fullWidth size="small">
+          <InputLabel>Status</InputLabel>
+          <Select
+            value={filters.status}
+            label="Status"
+            onChange={(e) => onFilterChange('status', e.target.value)}
+          >
+            <MenuItem value="all">All Status</MenuItem>
+            {Object.entries(PROJECT_STATUS_CONFIG).map(([status, config]) => (
+              <MenuItem key={status} value={parseInt(status)}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  {React.cloneElement(config.icon, { sx: { color: config.iconColor } })}
+                  {config.label}
+                </Box>
+              </MenuItem>
+            ))}
+          </Select>
+        </FormControl>
+
+        {isAllProjectsView && teams.length > 1 && (
+          <FormControl fullWidth size="small">
+            <InputLabel>Team</InputLabel>
+            <Select
+              value={filters.team}
+              label="Team"
+              onChange={(e) => onFilterChange('team', e.target.value)}
+            >
+              <MenuItem value="all">All Teams</MenuItem>
+              {teams.map((team) => (
+                <MenuItem key={team.id} value={team.id}>
+                  {team.name}
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+        )}
+
+        <FormControl fullWidth size="small">
+          <InputLabel>Priority</InputLabel>
+          <Select
+            value={filters.priority}
+            label="Priority"
+            onChange={(e) => onFilterChange('priority', e.target.value)}
+          >
+            <MenuItem value="all">All Priorities</MenuItem>
+            {Object.entries(PRIORITY_CONFIG).map(([priority, config]) => (
+              <MenuItem key={priority} value={parseInt(priority)}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  {config.icon}
+                  {config.label}
+                </Box>
+              </MenuItem>
+            ))}
+          </Select>
+        </FormControl>
+
+        <FormControl fullWidth size="small">
+          <InputLabel>Sort By</InputLabel>
+          <Select
+            value={filters.sortBy}
+            label="Sort By"
+            onChange={(e) => onFilterChange('sortBy', e.target.value)}
+          >
+            <MenuItem value="created_at">Date Created</MenuItem>
+            <MenuItem value="name">Name</MenuItem>
+            <MenuItem value="start_date">Start Date</MenuItem>
+            <MenuItem value="status">Status</MenuItem>
+            <MenuItem value="progress">Progress</MenuItem>
+            <MenuItem value="priority">Priority</MenuItem>
+            {isAllProjectsView && <MenuItem value="team">Team</MenuItem>}
+          </Select>
+        </FormControl>
+
+        <Button 
+          variant="outlined" 
+          onClick={onClose}
+          sx={{ mt: 2 }}
+        >
+          Apply Filters
+        </Button>
+      </Box>
+    </Drawer>
+  );
+};
+
+// --- MAIN COMPONENT ---
 
 const ProjectList: React.FC = () => {
   const { teamId } = useParams<{ teamId: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
+  const isSmallMobile = useMediaQuery('(max-width: 480px)');
+  const isTablet = useMediaQuery('(max-width: 900px)');
   const { user } = useSelector((state: RootState) => state.auth);
   
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [filteredProjects, setFilteredProjects] = useState<Project[]>([]);
+  const [projects, setProjects] = useState<EnhancedProject[]>([]);
+  const [teams, setTeams] = useState<Team[]>([]);
   const [loading, setLoading] = useState(true);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
+  const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [snackbar, setSnackbar] = useState({ 
     open: false, 
     message: '', 
     severity: 'success' as 'success' | 'error' | 'info' | 'warning' 
   });
   const [projectMenuAnchor, setProjectMenuAnchor] = useState<null | HTMLElement>(null);
-  const [selectedProject, setSelectedProject] = useState<Project | null>(null);
+  const [selectedProject, setSelectedProject] = useState<EnhancedProject | null>(null);
+  const [filterDrawerOpen, setFilterDrawerOpen] = useState(false);
   
   // Enhanced state management
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState<number | 'all'>('all');
-  const [sortBy, setSortBy] = useState<'name' | 'created_at' | 'start_date' | 'status' | 'progress'>('created_at');
-  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
-  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
-  const [actionLoading, setActionLoading] = useState(false);
-
-  const [projectData, setProjectData] = useState({
-    name: '',
-    description: '',
-    start_date: '',
-    end_date: '',
-    status: ProjectStatus.PLANNING,
-    team: teamId,
+  const [filters, setFilters] = useState({
+    status: 'all' as number | 'all',
+    team: 'all' as string,
+    priority: 'all' as number | 'all',
+    sortBy: 'created_at' as 'name' | 'created_at' | 'start_date' | 'status' | 'progress' | 'team' | 'priority',
+    sortOrder: 'desc' as 'asc' | 'desc',
   });
+  const [viewMode, setViewMode] = useState<'list' | 'grid' | 'compact'>('grid');
+  const [refreshing, setRefreshing] = useState(false);
+  const [showFavorites, setShowFavorites] = useState(false);
 
-  // Enhanced project statistics
   const [projectStats, setProjectStats] = useState<ProjectStats>({
     total: 0,
     active: 0,
@@ -186,33 +837,103 @@ const ProjectList: React.FC = () => {
     archived: 0,
   });
 
-  // Enhanced project loading with progress calculation
+  // Determine view context
+  const isAllProjectsView = !teamId || location.pathname.includes('/projects');
+  const currentTeam = teams.find(team => team.id === teamId);
+
+  // Auto-adjust view mode based on screen size
+  useEffect(() => {
+    if (isSmallMobile) {
+      setViewMode('compact');
+    } else if (isMobile) {
+      setViewMode('grid');
+    }
+  }, [isMobile, isSmallMobile]);
+
   const loadProjects = async () => {
-    if (!teamId) return;
-    
     try {
       setLoading(true);
-      const response = await projectAPI.getProjects(teamId);
-      const projectsData: Project[] = response.data;
+      setRefreshing(true);
+      let projectsData: EnhancedProject[] = [];
+
+      const calculatePriority = (project: Project): number => {
+        if (project.status === ProjectStatus.COMPLETED || project.status === ProjectStatus.CANCELLED) return 1;
+        const daysRemaining = getDaysRemaining(project.end_date);
+        if (daysRemaining < 0) return 4;
+        if (daysRemaining < 3) return 4;
+        if (daysRemaining < 7) return 3;
+        if (daysRemaining < 14) return 2;
+        return 1;
+      };
+
+      const calculateProjectProgress = (project: Project): number => {
+        if (project.status === ProjectStatus.COMPLETED) return 100;
+        if (project.status === ProjectStatus.CANCELLED) return 0;
+        const start = new Date(project.start_date).getTime();
+        const end = new Date(project.end_date).getTime();
+        const now = new Date().getTime();
+        if (now >= end) return 100;
+        if (now <= start) return 0;
+        const totalDuration = end - start;
+        const elapsed = now - start;
+        return Math.min(Math.round((elapsed / totalDuration) * 100), 95);
+      };
+
+      if (isAllProjectsView) {
+        const teamsResponse = await teamAPI.getTeams();
+        const userTeams = teamsResponse.data;
+        setTeams(userTeams);
+
+        for (const team of userTeams) {
+          try {
+            const projectsResponse = await projectAPI.getProjects(team.id);
+            const teamProjects = projectsResponse.data.map((project: Project) => ({
+              ...project,
+              progress: calculateProjectProgress(project),
+              daysRemaining: getDaysRemaining(project.end_date),
+              team_name: team.name,
+              team_id: team.id,
+              member_count: project.member_count || 0,
+              task_count: project.task_count || 0,
+              is_favorite: Math.random() > 0.7,
+              priority: calculatePriority(project),
+            }));
+            projectsData.push(...teamProjects);
+          } catch (error) {
+            console.error(`Failed to load projects for team ${team.id}:`, error);
+          }
+        }
+      } else if (teamId) {
+        const projectsResponse = await projectAPI.getProjects(teamId);
+        projectsData = projectsResponse.data.map((project: Project) => ({
+          ...project,
+          progress: calculateProjectProgress(project),
+          daysRemaining: getDaysRemaining(project.end_date),
+          team_id: teamId,
+          member_count: project.member_count || 0,
+          task_count: project.task_count || 0,
+          is_favorite: Math.random() > 0.7,
+          priority: calculatePriority(project),
+        }));
+
+        try {
+          const teamResponse = await teamAPI.getTeam(teamId);
+          setTeams([teamResponse.data]);
+        } catch (error) {
+          console.error('Failed to load team info:', error);
+        }
+      }
       
-      // Calculate project progress and enhance data
-      const enhancedProjects = projectsData.map(project => ({
-        ...project,
-        progress: calculateProjectProgress(project),
-        daysRemaining: getDaysRemaining(project.end_date),
-      }));
+      setProjects(projectsData);
       
-      setProjects(enhancedProjects);
-      
-      // Calculate comprehensive statistics
       const stats = {
-        total: enhancedProjects.length,
-        active: enhancedProjects.filter(p => p.status === ProjectStatus.ACTIVE).length,
-        completed: enhancedProjects.filter(p => p.status === ProjectStatus.COMPLETED).length,
-        planning: enhancedProjects.filter(p => p.status === ProjectStatus.PLANNING).length,
-        onHold: enhancedProjects.filter(p => p.status === ProjectStatus.ON_HOLD).length,
-        cancelled: enhancedProjects.filter(p => p.status === ProjectStatus.CANCELLED).length,
-        archived: enhancedProjects.filter(p => p.status === ProjectStatus.ARCHIVED).length,
+        total: projectsData.length,
+        active: projectsData.filter(p => p.status === ProjectStatus.ACTIVE).length,
+        completed: projectsData.filter(p => p.status === ProjectStatus.COMPLETED).length,
+        planning: projectsData.filter(p => p.status === ProjectStatus.PLANNING).length,
+        onHold: projectsData.filter(p => p.status === ProjectStatus.ON_HOLD).length,
+        cancelled: projectsData.filter(p => p.status === ProjectStatus.CANCELLED).length,
+        archived: projectsData.filter(p => p.status === ProjectStatus.ARCHIVED).length,
       };
       setProjectStats(stats);
       
@@ -225,55 +946,46 @@ const ProjectList: React.FC = () => {
       });
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   };
 
-  // Calculate project progress based on tasks and timeline
-  const calculateProjectProgress = (project: Project): number => {
-    // Simple implementation - you can enhance this with actual task completion data
-    if (project.status === ProjectStatus.COMPLETED) return 100;
-    if (project.status === ProjectStatus.CANCELLED) return 0;
-    
-    const start = new Date(project.start_date).getTime();
-    const end = new Date(project.end_date).getTime();
-    const now = new Date().getTime();
-    
-    if (now >= end) return 100;
-    if (now <= start) return 0;
-    
-    const totalDuration = end - start;
-    const elapsed = now - start;
-    return Math.min(Math.round((elapsed / totalDuration) * 100), 95);
-  };
-
   useEffect(() => {
-    if (teamId) {
-      loadProjects();
-    }
-  }, [teamId]);
+    loadProjects();
+  }, [teamId, location.pathname]);
 
-  // Enhanced filtering and sorting
-  useEffect(() => {
+  // Enhanced filtering and sorting with useMemo
+  const filteredProjects = useMemo(() => {
     let filtered = projects;
 
-    // Apply search filter
     if (searchQuery) {
       filtered = filtered.filter(project =>
         project.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        project.description?.toLowerCase().includes(searchQuery.toLowerCase())
+        project.description?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        project.team_name?.toLowerCase().includes(searchQuery.toLowerCase())
       );
     }
 
-    // Apply status filter
-    if (statusFilter !== 'all') {
-      filtered = filtered.filter(project => project.status === statusFilter);
+    if (filters.status !== 'all') {
+      filtered = filtered.filter(project => project.status === filters.status);
     }
 
-    // Apply sorting
-    filtered = [...filtered].sort((a, b) => {
+    if (filters.team !== 'all') {
+      filtered = filtered.filter(project => project.team_id === filters.team);
+    }
+
+    if (filters.priority !== 'all') {
+      filtered = filtered.filter(project => project.priority === filters.priority);
+    }
+
+    if (showFavorites) {
+      filtered = filtered.filter(project => project.is_favorite);
+    }
+
+    return [...filtered].sort((a, b) => {
       let aValue: any, bValue: any;
       
-      switch (sortBy) {
+      switch (filters.sortBy) {
         case 'name':
           aValue = a.name.toLowerCase();
           bValue = b.name.toLowerCase();
@@ -291,98 +1003,35 @@ const ProjectList: React.FC = () => {
           bValue = b.status;
           break;
         case 'progress':
-          aValue = (a as any).progress || 0;
-          bValue = (b as any).progress || 0;
+          aValue = a.progress || 0;
+          bValue = b.progress || 0;
+          break;
+        case 'team':
+          aValue = a.team_name || '';
+          bValue = b.team_name || '';
+          break;
+        case 'priority':
+          aValue = a.priority || 0;
+          bValue = b.priority || 0;
           break;
         default:
           return 0;
       }
 
-      if (sortOrder === 'asc') {
+      if (filters.sortOrder === 'asc') {
         return aValue > bValue ? 1 : -1;
       } else {
         return aValue < bValue ? 1 : -1;
       }
     });
+  }, [projects, searchQuery, filters, showFavorites]);
 
-    setFilteredProjects(filtered);
-  }, [projects, searchQuery, statusFilter, sortBy, sortOrder]);
-
-  // Enhanced project creation with validation
-  const handleCreateProject = async () => {
-    if (!teamId) return;
-
-    // Validation
-    if (!projectData.name.trim()) {
-      setSnackbar({ 
-        open: true, 
-        message: 'Project name is required', 
-        severity: 'warning' 
-      });
-      return;
-    }
-    
-
-    const startDate = new Date(projectData.start_date);
-    const endDate = new Date(projectData.end_date);
-    
-    if (endDate <= startDate) {
-      setSnackbar({ 
-        open: true, 
-        message: 'End date must be after start date', 
-        severity: 'warning' 
-      });
-      return;
-    }
-
-    try {
-      setActionLoading(true);
-      const formattedData = {
-        name: projectData.name.trim(),
-        description: projectData.description.trim(),
-        start_date: projectData.start_date ? new Date(projectData.start_date).toISOString() : new Date().toISOString(),
-        end_date: projectData.end_date ? new Date(projectData.end_date).toISOString() : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
-        status: projectData.status,
-        team: teamId,
-      };
-
-      await projectAPI.createProject(teamId, formattedData);
-      
-      setSnackbar({ 
-        open: true, 
-        message: 'Project created successfully', 
-        severity: 'success' 
-      });
-      setCreateDialogOpen(false);
-      setProjectData({
-        name: '',
-        description: '',
-        start_date: '',
-        end_date: '',
-        status: ProjectStatus.PLANNING,
-        team: teamId,
-      });
-      await loadProjects();
-    } catch (error: any) {
-      console.error('Project creation failed:', error);
-      
-      let message = 'Failed to create project';
-      if (error.response?.data?.error) {
-        message = error.response.data.error;
-      } else if (error.response?.data?.detail) {
-        message = error.response.data.detail;
-      } else if (error.response?.status === 403) {
-        message = 'You do not have permission to create projects. Please contact your team admin.';
-      }
-      
-      setSnackbar({ open: true, message, severity: 'error' });
-    } finally {
-      setActionLoading(false);
-    }
+  // Handler functions
+  const handleFilterChange = (key: string, value: any) => {
+    setFilters(prev => ({ ...prev, [key]: value }));
   };
 
-  // Enhanced project actions
-  const handleProjectMenuOpen = (event: React.MouseEvent<HTMLElement>, project: Project) => {
+  const handleProjectMenuOpen = (event: React.MouseEvent<HTMLElement>, project: EnhancedProject) => {
     event.stopPropagation();
     setProjectMenuAnchor(event.currentTarget);
     setSelectedProject(project);
@@ -390,16 +1039,39 @@ const ProjectList: React.FC = () => {
 
   const handleProjectMenuClose = () => {
     setProjectMenuAnchor(null);
-    setSelectedProject(null);
   };
 
-  const handleDeleteClick = () => {
-    setDeleteDialogOpen(true);
+  const handleDialogClose = () => {
+    setCreateDialogOpen(false);
+    setEditDialogOpen(false);
+    setDeleteDialogOpen(false);
+    setSelectedProject(null); 
     setDeleteConfirmText('');
   };
 
+  const handleEditClick = () => {
+    handleProjectMenuClose();
+    setTimeout(() => {
+        setEditDialogOpen(true);
+    }, 0);
+  };
+
+  const handleDeleteClick = () => {
+    handleProjectMenuClose();
+    setDeleteConfirmText('');
+    setDeleteDialogOpen(true);
+  };
+
+  const handleSettingsClick = () => {
+    handleProjectMenuClose();
+    if (selectedProject && selectedProject.team_id) {
+      navigate(`/team/${selectedProject.team_id}/project/${selectedProject.id}/settings`);
+      setSelectedProject(null); 
+    }
+  };
+
   const handleDeleteConfirm = async () => {
-    if (!selectedProject || !teamId) return;
+    if (!selectedProject || !selectedProject.team_id) return;
 
     if (!selectedProject.name || deleteConfirmText !== selectedProject.name) {
       setSnackbar({ 
@@ -412,14 +1084,13 @@ const ProjectList: React.FC = () => {
 
     try {
       setDeleteLoading(true);
-      await projectAPI.deleteProject(teamId, selectedProject.id);
+      await projectAPI.deleteProject(selectedProject.team_id, selectedProject.id);
       setSnackbar({ 
         open: true, 
         message: 'Project deleted successfully', 
         severity: 'success' 
       });
-      setDeleteDialogOpen(false);
-      handleProjectMenuClose();
+      handleDialogClose(); 
       await loadProjects();
     } catch (error: any) {
       console.error('Failed to delete project:', error);
@@ -430,116 +1101,96 @@ const ProjectList: React.FC = () => {
     }
   };
 
-  const handleSettingsClick = () => {
-    if (selectedProject && teamId) {
-      navigate(`/team/${teamId}/project/${selectedProject.id}/settings`);
-      handleProjectMenuClose();
-    }
-  };
-
-  const handleEditClick = () => {
-    if (selectedProject && teamId) {
-      navigate(`/team/${teamId}/project/${selectedProject.id}/edit`);
-      handleProjectMenuClose();
-    }
-  };
-
-  const handleDuplicateProject = async () => {
-    if (!selectedProject || !teamId) return;
-
-    try {
-      setActionLoading(true);
-      const duplicateData = {
-        name: `${selectedProject.name} (Copy)`,
-        description: selectedProject.description,
-        start_date: new Date().toISOString(),
-        end_date: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
-        status: ProjectStatus.PLANNING,
-        team: teamId,
-      };
-
-      await projectAPI.createProject(teamId, duplicateData);
-      setSnackbar({ 
-        open: true, 
-        message: 'Project duplicated successfully', 
-        severity: 'success' 
-      });
-      handleProjectMenuClose();
-      await loadProjects();
-    } catch (error: any) {
-      const message = error.response?.data?.error || 'Failed to duplicate project';
-      setSnackbar({ open: true, message, severity: 'error' });
-    } finally {
-      setActionLoading(false);
-    }
-  };
-
-  // Utility functions
-  const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString('en-US', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric'
+  const handleProjectUpdated = (updatedProject: any) => {
+    setSnackbar({
+      open: true,
+      message: 'Project updated successfully!',
+      severity: 'success'
     });
+    handleDialogClose();
+    loadProjects();
   };
 
-  const getDaysRemaining = (endDate: string) => {
-    const end = new Date(endDate);
-    const today = new Date();
-    const diffTime = end.getTime() - today.getTime();
-    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-    return diffDays;
+  const handleCreateProject = (project: any) => {
+    setSnackbar({
+      open: true,
+      message: 'Project created successfully!',
+      severity: 'success'
+    });
+    handleDialogClose();
+    loadProjects();
   };
 
-  const getProgressColor = (days: number) => {
-    if (days < 0) return 'error';
-    if (days < 7) return 'warning';
-    return 'success';
+  const toggleFavorite = async (project: EnhancedProject, event: React.MouseEvent) => {
+    event.stopPropagation();
+    setProjects(prev => prev.map(p => 
+      p.id === project.id ? { ...p, is_favorite: !p.is_favorite } : p
+    ));
   };
 
-  const getProgressVariant = (progress: number) => {
-    if (progress >= 100) return 'success';
-    if (progress >= 75) return 'primary';
-    if (progress >= 50) return 'secondary';
-    if (progress >= 25) return 'warning';
-    return 'error';
+  const getHeaderTitle = () => {
+    if (isAllProjectsView) return 'All Projects';
+    if (currentTeam) return `${currentTeam.name} Projects`;
+    return 'Projects';
   };
 
-  // Custom actions for CommonHeader
+  const getHeaderSubtitle = () => {
+    if (isAllProjectsView) return 'Projects across all your teams';
+    if (currentTeam) return currentTeam.description || 'Team projects and initiatives';
+    return 'Manage and organize your work';
+  };
+
+  // Enhanced header actions with better mobile support
   const headerActions = (
-    <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
-      <Tooltip title="Team Dashboard">
-        <IconButton 
-          onClick={() => navigate(`/team/${teamId}`)}
-          sx={{ 
-            backgroundColor: 'primary.50',
-            color: 'primary.main',
-            '&:hover': {
-              backgroundColor: 'primary.100',
-            }
-          }}
-        >
-          <DashboardIcon />
-        </IconButton>
+    <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', flexWrap: 'wrap' }}>
+      {!isMobile && (
+        <Tooltip title="Dashboard">
+          <IconButton 
+            onClick={() => navigate('/dashboard')}
+            sx={{ 
+              backgroundColor: 'white',
+              boxShadow: '0 2px 8px rgba(0, 0, 0, 0.1)',
+              '&:hover': { backgroundColor: 'grey.50' }
+            }}
+          >
+            <DashboardIcon />
+          </IconButton>
+        </Tooltip>
+      )}
+
+      <Tooltip title="Refresh">
+        <span>
+          <IconButton 
+            onClick={loadProjects}
+            disabled={refreshing}
+            sx={{ 
+              backgroundColor: 'white',
+              boxShadow: '0 2px 8px rgba(0, 0, 0, 0.1)',
+              '&:hover': { backgroundColor: 'grey.50' }
+            }}
+          >
+            <RefreshIcon />
+          </IconButton>
+        </span>
       </Tooltip>
-      
-      <Tooltip title="Refresh Projects">
-        <IconButton 
-          onClick={loadProjects}
-          disabled={loading}
-          sx={{ 
-            backgroundColor: 'secondary.50',
-            color: 'secondary.main',
-            '&:hover': {
-              backgroundColor: 'secondary.100',
-            }
-          }}
-        >
-          <RefreshIcon />
-        </IconButton>
-      </Tooltip>
+
+      {!isMobile && <QuickActionsMenu />}
     </Box>
   );
+
+  // Calculate grid columns based on screen size and view mode
+  const getGridColumns = () => {
+    if (viewMode === 'compact') {
+      if (isSmallMobile) return 6;
+      if (isMobile) return 4;
+      return 3;
+    }
+    
+    if (isSmallMobile) return 12;
+    if (isMobile) return 6;
+    if (isTablet) return 4;
+    return 3;
+  };
 
   if (loading) {
     return (
@@ -562,307 +1213,469 @@ const ProjectList: React.FC = () => {
 
   return (
     <Box sx={{ minHeight: '100vh', backgroundColor: '#f8fafc' }}>
-      {/* Enhanced Header */}
       <CommonHeader 
         showBackButton
-        backButtonPath={`/team/${teamId}`}
-        title="Projects"
-        subtitle="Manage and organize your team's work"
+        backButtonPath={teamId ? `/team/${teamId}` : '/dashboard'}
+        title={getHeaderTitle()}
+        subtitle={getHeaderSubtitle()}
         customActions={headerActions}
         variant="page"
+        sx={{
+          minHeight: isMobile ? 80 : 100,
+          py: isMobile ? 1.5 : 2,
+        }}
       />
 
-      <Container maxWidth="xl" sx={{ py: 4, px: { xs: 2, sm: 3 } }}>
-        {/* Enhanced Project Statistics Cards */}
-        <Grid container spacing={3} sx={{ mb: 4 }}>
-          {[
-            { 
-              key: 'total', 
-              label: 'Total Projects', 
-              value: projectStats.total, 
-              color: 'primary' as const,
-              icon: <FolderIcon sx={{ fontSize: 32 }} />,
-              description: 'All projects'
-            },
-            { 
-              key: 'active', 
-              label: 'Active', 
-              value: projectStats.active, 
-              color: 'success' as const,
-              icon: <PlayIcon sx={{ fontSize: 32 }} />,
-              description: 'In progress'
-            },
-            { 
-              key: 'completed', 
-              label: 'Completed', 
-              value: projectStats.completed, 
-              color: 'info' as const,
-              icon: <CheckCircleIcon sx={{ fontSize: 32 }} />,
-              description: 'Finished'
-            },
-            { 
-              key: 'planning', 
-              label: 'Planning', 
-              value: projectStats.planning, 
-              color: 'default' as const,
-              icon: <PlanningIcon sx={{ fontSize: 32 }} />,
-              description: 'In planning'
-            },
-            { 
-              key: 'onHold', 
-              label: 'On Hold', 
-              value: projectStats.onHold, 
-              color: 'warning' as const,
-              icon: <PauseIcon sx={{ fontSize: 32 }} />,
-              description: 'Paused'
-            },
-            { 
-              key: 'cancelled', 
-              label: 'Cancelled', 
-              value: projectStats.cancelled, 
-              color: 'error' as const,
-              icon: <CancelIcon sx={{ fontSize: 32 }} />,
-              description: 'Cancelled'
-            },
-          ].map((stat) => (
-            <Grid item xs={6} sm={4} md={2} key={stat.key}>
-              <Card 
-                sx={{ 
-                  borderRadius: 3,
-                  backgroundColor: 'white',
-                  boxShadow: '0 4px 20px rgba(0, 0, 0, 0.08)',
-                  border: '1px solid',
-                  borderColor: 'divider',
-                  transition: 'all 0.3s ease',
-                  height: '100%',
+      <Container maxWidth="xl" sx={{ py: isMobile ? 2 : 1.5, px: { xs: 1, sm: 2, md: 3 } }}>
+        
+      {/* Enhanced Statistics Cards with Indicators */}
+      <Grid container spacing={isMobile ? 1 : 2} sx={{ mb: isMobile ? 2 : 3 }}>
+        {[
+          { 
+            key: 'total', 
+            label: 'Total Projects', 
+            value: projectStats.total, 
+            color: 'primary' as const,
+            icon: <FolderIcon />,
+            indicator: {
+              icon: <GroupsIcon sx={{ fontSize: 12 }} />,
+              value: teams.length,
+              label: 'teams',
+              bgColor: 'primary.50',
+              textColor: 'primary.main'
+            }
+          },
+          { 
+            key: 'active', 
+            label: 'Active', 
+            value: projectStats.active, 
+            color: 'success' as const,
+            icon: <PlayIcon />,
+            indicator: {
+              icon: <TrendingUpIcon sx={{ fontSize: 12 }} />,
+              value: `${Math.round((projectStats.active / projectStats.total) * 100) || 0}%`,
+              label: 'of total',
+              bgColor: 'success.50',
+              textColor: 'success.main'
+            }
+          },
+          { 
+            key: 'completed', 
+            label: 'Completed', 
+            value: projectStats.completed, 
+            color: 'info' as const,
+            icon: <CheckCircleIcon />,
+            indicator: {
+              icon: <CalendarIcon sx={{ fontSize: 12 }} />,
+              value: projectStats.completed > 0 ? '✓' : '--',
+              label: 'done',
+              bgColor: 'info.50',
+              textColor: 'info.main'
+            }
+          },
+          { 
+            key: 'planning', 
+            label: 'Planning', 
+            value: projectStats.planning, 
+            color: 'default' as const,
+            icon: <PlanningIcon />,
+            indicator: {
+              icon: <PauseIcon sx={{ fontSize: 12 }} />, // Changed to PauseIcon for "on hold"
+              value: projectStats.onHold,
+              label: 'on hold',
+              bgColor: 'warning.50', // Changed to warning color for on hold
+              textColor: 'warning.main'
+            }
+          },
+        ].map((stat) => (
+          <Grid item xs={6} sm={3} key={stat.key}>
+            <Card sx={{ 
+              borderRadius: 2, 
+              backgroundColor: 'white', 
+              boxShadow: '0 2px 8px rgba(0, 0, 0, 0.06)',
+              border: '1px solid',
+              borderColor: 'divider',
+              height: '100%',
+              transition: 'all 0.2s ease',
+              position: 'relative',
+              '&:hover': {
+                transform: 'translateY(-1px)',
+                boxShadow: '0 4px 12px rgba(0, 0, 0, 0.1)'
+              }
+            }}>
+              <CardContent sx={{ 
+                p: isMobile ? 1.5 : 2, 
+                display: 'flex', 
+                alignItems: 'center', 
+                gap: 1.5,
+                '&:last-child': { pb: isMobile ? 1.5 : 2 }
+              }}>
+                {/* Original Icon Box */}
+                <Box sx={{ 
+                  p: isMobile ? 1 : 1.5, 
+                  borderRadius: 2, 
+                  backgroundColor: `${stat.color}.50`,
+                  color: `${stat.color}.main`,
                   display: 'flex',
-                  flexDirection: 'column',
-                  '&:hover': {
-                    transform: 'translateY(-2px)',
-                    boxShadow: '0 6px 25px rgba(0, 0, 0, 0.12)'
-                  }
-                }}
-              >
-                <CardContent sx={{ 
-                  p: 3, 
-                  '&:last-child': { pb: 3 },
-                  flex: 1,
-                  display: 'flex',
-                  flexDirection: 'column',
-                  justifyContent: 'space-between'
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  flexShrink: 0,
+                  width: isMobile ? 44 : 50,
+                  height: isMobile ? 44 : 50
                 }}>
-                  <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 3, mb: 2 }}>
-                    <Box sx={{ 
-                      p: 2.5,
-                      borderRadius: 3, 
-                      backgroundColor: `${stat.color}.50`,
-                      color: `${stat.color}.main`,
-                      flexShrink: 0,
+                  {React.cloneElement(stat.icon, { sx: { fontSize: isMobile ? 20 : 24 } })}
+                </Box>
+                
+                {/* Content */}
+                <Box sx={{ flex: 1, minWidth: 0 }}>
+                  <Typography 
+                    variant={isMobile ? "h5" : "h4"} 
+                    fontWeight="800" 
+                    color={`${stat.color}.main`}
+                    sx={{ 
+                      lineHeight: 1.1, 
+                      mb: 0.5, 
+                      fontSize: isMobile ? '1.25rem' : '1.5rem'
+                    }}
+                  >
+                    {stat.value}
+                  </Typography>
+                  <Typography 
+                    variant="subtitle2" 
+                    fontWeight="600" 
+                    color="text.primary"
+                    sx={{ fontSize: isMobile ? '0.75rem' : '0.875rem' }}
+                  >
+                    {stat.label}
+                  </Typography>
+                </Box>
+
+                {/* Indicator - Simple top-right text */}
+                <Box sx={{ 
+                  position: 'absolute',
+                  top: 12,
+                  right: 12,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 0.5
+                }}>
+                  <Typography 
+                    variant="caption" 
+                    fontWeight="700"
+                    sx={{ 
+                      color: stat.indicator.textColor,
+                      fontSize: isMobile ? '0.7rem' : '0.75rem',
+                      whiteSpace: 'nowrap',
+                      backgroundColor: stat.indicator.bgColor,
+                      px: 0.75,
+                      py: 0.25,
+                      borderRadius: 1,
                       display: 'flex',
                       alignItems: 'center',
-                      justifyContent: 'center',
-                      width: 70,
-                      height: 70,
-                    }}>
-                      {stat.icon}
-                    </Box>
-                    <Box sx={{ minWidth: 0, flex: 1 }}>
-                      <Typography variant="body2" color="text.secondary" fontWeight="500" sx={{ mb: 1 }}>
-                        {stat.label}
-                      </Typography>
-                      <Typography variant="h4" fontWeight="700" color={`${stat.color}.main`}>
-                        {stat.value}
-                      </Typography>
-                    </Box>
-                  </Box>
-                  <Typography variant="caption" color="text.secondary">
-                    {stat.description}
+                      gap: 0.5
+                    }}
+                  >
+                    {React.cloneElement(stat.indicator.icon, { 
+                      sx: { fontSize: isMobile ? 10 : 12 } 
+                    })}
+                    {stat.indicator.value}
                   </Typography>
-                </CardContent>
-              </Card>
-            </Grid>
-          ))}
-        </Grid>
+                </Box>
+              </CardContent>
+            </Card>
+          </Grid>
+        ))}
+      </Grid>
+{/* Enhanced Controls Bar - Fixed for mobile */}
+<Paper 
+  sx={{ 
+    borderRadius: 2, 
+    backgroundColor: 'white', 
+    boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)',
+    border: '1px solid',
+    borderColor: 'divider',
+    p: isMobile ? 1.5 : 2, 
+    mb: 3
+  }}
+>
+  <Box sx={{ 
+    display: 'flex', 
+    flexDirection: isMobile ? 'row' : 'row', // Always row, never column
+    gap: isMobile ? 1 : 2,
+    alignItems: 'center',
+    flexWrap: isMobile ? 'nowrap' : 'nowrap' // Never wrap on mobile
+  }}>
+    {/* Search Bar - Compact on mobile */}
+    <Box sx={{ 
+      display: 'flex', 
+      alignItems: 'center',
+      flex: isMobile ? 1 : 1, // Takes available space
+      minWidth: 0 // Allows shrinking
+    }}>
+      <TextField
+        placeholder={isMobile ? "Search..." : "Search projects..."}
+        value={searchQuery}
+        onChange={(e) => setSearchQuery(e.target.value)}
+        sx={{
+          flex: 1,
+          '& .MuiOutlinedInput-root': { 
+            borderRadius: 1.5,
+            height: isMobile ? 36 : 44,
+            fontSize: isMobile ? '0.875rem' : '1rem'
+          },
+          '& .MuiInputBase-input': {
+            fontSize: isMobile ? '0.875rem' : '1rem'
+          }
+        }}
+        size="small"
+        InputProps={{
+          startAdornment: (
+            <InputAdornment position="start">
+              <SearchIcon color="action" fontSize={isMobile ? "small" : "medium"} />
+            </InputAdornment>
+          ),
+          endAdornment: searchQuery && (
+            <InputAdornment position="end">
+              <IconButton 
+                size="small" 
+                onClick={() => setSearchQuery('')}
+                sx={{ p: 0.5 }}
+              >
+                <ClearIcon fontSize="small" />
+              </IconButton>
+            </InputAdornment>
+          ),
+        }}
+      />
+    </Box>
 
-        {/* Enhanced Controls Bar */}
-        <Paper 
-          sx={{ 
-            borderRadius: 3,
-            backgroundColor: 'white',
-            boxShadow: '0 4px 20px rgba(0, 0, 0, 0.08)',
-            border: '1px solid',
-            borderColor: 'divider',
-            p: 3,
-            mb: 4
+    {/* Mobile Filter Button - Next to search */}
+    {isMobile && (
+      <Tooltip title="Filters">
+        <IconButton
+          onClick={() => setFilterDrawerOpen(true)}
+          sx={{
+            backgroundColor: 'action.hover',
+            borderRadius: 1.5,
+            height: 36,
+            width: 36,
+            flexShrink: 0,
+            ml: -0.5 // Bring it closer to search bar
           }}
         >
-          <Box sx={{ 
-            display: 'flex', 
-            justifyContent: 'space-between', 
-            alignItems: 'center',
-            flexWrap: 'wrap',
-            gap: 2
-          }}>
-            {/* Search and Filters */}
-            <Box sx={{ display: 'flex', gap: 2, alignItems: 'center', flexWrap: 'wrap', flex: 1 }}>
-              <TextField
-                placeholder="Search projects..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                InputProps={{
-                  startAdornment: (
-                    <InputAdornment position="start">
-                      <SearchIcon color="action" />
-                    </InputAdornment>
-                  ),
-                }}
-                sx={{ 
-                  minWidth: 250,
-                  '& .MuiOutlinedInput-root': { 
-                    borderRadius: 2,
-                  } 
-                }}
-                size="small"
-              />
+          <FilterIcon fontSize="small" />
+        </IconButton>
+      </Tooltip>
+    )}
 
-              <FormControl size="small" sx={{ minWidth: 120 }}>
-                <InputLabel>Status</InputLabel>
-                <Select
-                  value={statusFilter}
-                  label="Status"
-                  onChange={(e) => setStatusFilter(e.target.value as number | 'all')}
-                  sx={{ borderRadius: 2 }}
-                >
-                  <MenuItem value="all">All Status</MenuItem>
-                  {Object.entries(PROJECT_STATUS_CONFIG).map(([status, config]) => (
-                    <MenuItem key={status} value={parseInt(status)}>
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                        {config.icon}
-                        {config.label}
-                      </Box>
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
+    {/* Controls - Always in single row */}
+    <Box sx={{ 
+      display: 'flex', 
+      gap: 0.5, 
+      alignItems: 'center', 
+      flexShrink: 0, // Prevent shrinking
+      ml: isMobile ? 'auto' : 0 // Push to right on mobile
+    }}>
+      {/* Desktop Filters */}
+      {!isMobile && (
+        <>
+          <FormControl size="small" sx={{ minWidth: 100 }}>
+            <InputLabel>Status</InputLabel>
+            <Select
+              value={filters.status}
+              label="Status"
+              onChange={(e) => handleFilterChange('status', e.target.value)}
+              sx={{ borderRadius: 1.5 }}
+            >
+              <MenuItem value="all">All</MenuItem>
+              {Object.entries(PROJECT_STATUS_CONFIG).map(([status, config]) => (
+                <MenuItem key={status} value={parseInt(status)}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    {React.cloneElement(config.icon, { sx: { color: config.iconColor, fontSize: 16 } })}
+                    {config.label}
+                  </Box>
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
 
-              <FormControl size="small" sx={{ minWidth: 120 }}>
-                <InputLabel>Sort By</InputLabel>
-                <Select
-                  value={sortBy}
-                  label="Sort By"
-                  onChange={(e) => setSortBy(e.target.value as any)}
-                  sx={{ borderRadius: 2 }}
-                >
-                  <MenuItem value="created_at">Date Created</MenuItem>
-                  <MenuItem value="name">Name</MenuItem>
-                  <MenuItem value="start_date">Start Date</MenuItem>
-                  <MenuItem value="status">Status</MenuItem>
-                  <MenuItem value="progress">Progress</MenuItem>
-                </Select>
-              </FormControl>
-
-              <Tooltip title={`Sort ${sortOrder === 'asc' ? 'Descending' : 'Ascending'}`}>
-                <IconButton 
-                  onClick={() => setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')}
-                  sx={{ 
-                    backgroundColor: 'action.hover',
-                    borderRadius: 2
-                  }}
-                >
-                  <SortIcon />
-                </IconButton>
-              </Tooltip>
-            </Box>
-
-            {/* View Controls and Create Button */}
-            <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
-              <Box sx={{ 
-                display: 'flex', 
-                backgroundColor: 'grey.50',
-                borderRadius: 2,
-                p: 0.5
-              }}>
-                <Tooltip title="Grid View">
-                  <IconButton 
-                    size="small"
-                    onClick={() => setViewMode('grid')}
-                    sx={{ 
-                      borderRadius: 1.5,
-                      backgroundColor: viewMode === 'grid' ? 'white' : 'transparent',
-                      boxShadow: viewMode === 'grid' ? '0 2px 4px rgba(0,0,0,0.1)' : 'none'
-                    }}
-                  >
-                    <GridIcon fontSize="small" />
-                  </IconButton>
-                </Tooltip>
-                <Tooltip title="List View">
-                  <IconButton 
-                    size="small"
-                    onClick={() => setViewMode('list')}
-                    sx={{ 
-                      borderRadius: 1.5,
-                      backgroundColor: viewMode === 'list' ? 'white' : 'transparent',
-                      boxShadow: viewMode === 'list' ? '0 2px 4px rgba(0,0,0,0.1)' : 'none'
-                    }}
-                  >
-                    <ListIcon fontSize="small" />
-                  </IconButton>
-                </Tooltip>
-              </Box>
-
-              <Button
-                variant="contained"
-                startIcon={<AddIcon />}
-                onClick={() => setCreateDialogOpen(true)}
-                sx={{
-                  borderRadius: 2,
-                  px: 3,
-                  py: 1,
-                  textTransform: 'none',
-                  fontWeight: '600',
-                  boxShadow: '0 4px 12px rgba(37, 99, 235, 0.2)',
-                  whiteSpace: 'nowrap'
-                }}
+          {isAllProjectsView && teams.length > 1 && (
+            <FormControl size="small" sx={{ minWidth: 100 }}>
+              <InputLabel>Team</InputLabel>
+              <Select
+                value={filters.team}
+                label="Team"
+                onChange={(e) => handleFilterChange('team', e.target.value)}
+                sx={{ borderRadius: 1.5 }}
               >
-                New Project
-              </Button>
-            </Box>
-          </Box>
-        </Paper>
+                <MenuItem value="all">All</MenuItem>
+                {teams.map((team) => (
+                  <MenuItem key={team.id} value={team.id}>
+                    {team.name}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+          )}
+
+          <FormControl size="small" sx={{ minWidth: 100 }}>
+            <InputLabel>Sort</InputLabel>
+            <Select
+              value={filters.sortBy}
+              label="Sort"
+              onChange={(e) => handleFilterChange('sortBy', e.target.value)}
+              sx={{ borderRadius: 1.5 }}
+            >
+              <MenuItem value="created_at">Newest</MenuItem>
+              <MenuItem value="name">Name</MenuItem>
+              <MenuItem value="progress">Progress</MenuItem>
+              <MenuItem value="priority">Priority</MenuItem>
+            </Select>
+          </FormControl>
+
+          <Tooltip title={`Sort ${filters.sortOrder === 'asc' ? 'Descending' : 'Ascending'}`}>
+            <IconButton 
+              onClick={() => handleFilterChange('sortOrder', filters.sortOrder === 'asc' ? 'desc' : 'asc')}
+              sx={{ 
+                backgroundColor: 'action.hover',
+                borderRadius: 1.5
+              }}
+            >
+              <SortIcon />
+            </IconButton>
+          </Tooltip>
+        </>
+      )}
+
+      {/* Favorites Toggle */}
+      <Tooltip title={showFavorites ? "Show all" : "Favorites only"}>
+        <IconButton
+          onClick={() => setShowFavorites(!showFavorites)}
+          sx={{
+            color: showFavorites ? 'warning.main' : 'text.secondary',
+            flexShrink: 0,
+            p: 0.75
+          }}
+        >
+          <StarIcon fontSize={isMobile ? "small" : "medium"} />
+        </IconButton>
+      </Tooltip>
+
+      {/* Single View Mode Toggle Button */}
+      <Tooltip title={`Switch view (Current: ${viewMode === 'compact' ? 'Compact' : viewMode === 'grid' ? 'Grid' : 'List'})`}>
+        <IconButton
+          onClick={() => {
+            // Cycle through view modes: compact → grid → list → compact
+            if (viewMode === 'compact') setViewMode('grid');
+            else if (viewMode === 'grid') setViewMode('list');
+            else setViewMode('compact');
+          }}
+          sx={{
+            backgroundColor: 'grey.50',
+            borderRadius: 1.5,
+            color: 'primary.main',
+            '&:hover': {
+              backgroundColor: 'grey.100',
+            },
+            p: 0.75
+          }}
+        >
+          {viewMode === 'compact' && <CompactIcon fontSize={isMobile ? "small" : "medium"} />}
+          {viewMode === 'grid' && <GridIcon fontSize={isMobile ? "small" : "medium"} />}
+          {viewMode === 'list' && <ListIcon fontSize={isMobile ? "small" : "medium"} />}
+        </IconButton>
+      </Tooltip>
+
+      {/* New Project Button - Compact on mobile */}
+      <Button
+        variant="contained"
+        onClick={() => setCreateDialogOpen(true)}
+        sx={{
+          borderRadius: 1.5,
+          px: isMobile ? 1 : 1.5,
+          py: isMobile ? 0.6 : 1,
+          textTransform: 'none',
+          fontWeight: '600',
+          fontSize: isMobile ? '0.75rem' : '0.875rem',
+          minWidth: isMobile ? 36 : 'auto',
+          height: isMobile ? 36 : 40,
+          flexShrink: 0
+        }}
+      >
+        {isMobile ? '+' : 'New Project'}
+      </Button>
+    </Box>
+  </Box>
+
+  {/* Active Filters - Only show when filters are active */}
+  {(searchQuery || filters.status !== 'all' || filters.team !== 'all' || filters.priority !== 'all' || showFavorites) && (
+    <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', mt: 1.5 }}>
+      {searchQuery && (
+        <Chip 
+          label={`Search: "${searchQuery}"`} 
+          size="small" 
+          onDelete={() => setSearchQuery('')}
+        />
+      )}
+      {filters.status !== 'all' && (
+        <Chip 
+          label={`Status: ${PROJECT_STATUS_CONFIG[filters.status]?.label}`} 
+          size="small" 
+          onDelete={() => handleFilterChange('status', 'all')}
+        />
+      )}
+      {filters.team !== 'all' && (
+        <Chip 
+          label={`Team: ${teams.find(t => t.id === filters.team)?.name}`} 
+          size="small" 
+          onDelete={() => handleFilterChange('team', 'all')}
+        />
+      )}
+      {filters.priority !== 'all' && (
+        <Chip 
+          label={`Priority: ${PRIORITY_CONFIG[filters.priority]?.label}`} 
+          size="small" 
+          onDelete={() => handleFilterChange('priority', 'all')}
+        />
+      )}
+      {showFavorites && (
+        <Chip 
+          label="Favorites Only" 
+          size="small" 
+          onDelete={() => setShowFavorites(false)}
+        />
+      )}
+    </Box>
+  )}
+</Paper>
 
         {/* Results Count */}
-        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
-          <Typography variant="body2" color="text.secondary">
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2, flexWrap: 'wrap', gap: 1 }}>
+          <Typography variant="body2" color="text.secondary" sx={{ fontSize: isMobile ? '0.75rem' : '0.875rem' }}>
             Showing {filteredProjects.length} of {projects.length} projects
+            {isAllProjectsView && ` across ${teams.length} teams`}
           </Typography>
-          {searchQuery && (
-            <Chip 
-              label={`Search: "${searchQuery}"`} 
-              size="small" 
-              onDelete={() => setSearchQuery('')}
-            />
-          )}
         </Box>
 
-        {/* Enhanced Projects Grid/List */}
+        {/* Enhanced Projects Display */}
         {filteredProjects.length === 0 ? (
           <Paper sx={{ 
-            p: 8, 
+            p: isMobile ? 4 : 6, 
             textAlign: 'center',
-            borderRadius: 3,
+            borderRadius: 2,
             backgroundColor: 'white',
-            boxShadow: '0 4px 20px rgba(0, 0, 0, 0.08)',
+            boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)',
             border: '1px solid',
             borderColor: 'divider'
           }}>
-            <FolderIcon sx={{ fontSize: 80, color: 'text.secondary', mb: 3, opacity: 0.5 }} />
-            <Typography variant="h5" color="text.secondary" gutterBottom fontWeight="600">
+            <FolderIcon sx={{ fontSize: isMobile ? 60 : 80, color: 'text.secondary', mb: 2, opacity: 0.5 }} />
+            <Typography variant="h5" color="text.secondary" gutterBottom fontWeight="600" sx={{ fontSize: isMobile ? '1.25rem' : '1.5rem' }}>
               No Projects Found
             </Typography>
-            <Typography variant="body1" color="text.secondary" paragraph sx={{ mb: 4, maxWidth: 400, mx: 'auto' }}>
-              {searchQuery || statusFilter !== 'all' 
+            <Typography variant="body1" color="text.secondary" paragraph sx={{ mb: 3, maxWidth: 400, mx: 'auto', fontSize: isMobile ? '0.875rem' : '1rem' }}>
+              {searchQuery || filters.status !== 'all' || filters.team !== 'all'
                 ? 'Try adjusting your search or filters to find what you\'re looking for.'
-                : 'Create your first project to start organizing your team\'s work.'
+                : 'Create your first project to start organizing your work.'
               }
             </Typography>
             <Button
@@ -870,9 +1683,9 @@ const ProjectList: React.FC = () => {
               startIcon={<AddIcon />}
               onClick={() => setCreateDialogOpen(true)}
               sx={{
-                borderRadius: 2,
-                px: 4,
-                py: 1.5,
+                borderRadius: 1.5,
+                px: 3,
+                py: 1,
                 textTransform: 'none',
                 fontWeight: '600'
               }}
@@ -880,440 +1693,89 @@ const ProjectList: React.FC = () => {
               Create New Project
             </Button>
           </Paper>
-        ) : viewMode === 'grid' ? (
-          <Grid container spacing={3}>
+        ) : viewMode === 'list' ? (
+          /* List View */
+          <Box>
             {filteredProjects.map((project) => (
-              <Grid item xs={12} sm={6} lg={4} key={project.id}>
-                <Card 
-                  sx={{ 
-                    cursor: 'pointer',
-                    transition: 'all 0.3s ease',
-                    borderRadius: 3,
-                    backgroundColor: 'white',
-                    border: '1px solid',
-                    borderColor: 'divider',
-                    height: '100%',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    '&:hover': {
-                      transform: 'translateY(-4px)',
-                      boxShadow: '0 12px 30px rgba(0, 0, 0, 0.15)',
-                      borderColor: 'primary.main'
-                    }
-                  }}
-                >
-                  {/* Use CardActionArea only for the clickable area, not the entire card */}
-                  <CardContent sx={{ 
-                    p: 3, 
-                    flex: 1, 
-                    display: 'flex', 
-                    flexDirection: 'column',
-                    '&:last-child': { pb: 3 }
-                  }}>
-                    {/* Header with Status and Menu */}
-                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 2 }}>
-                      <Chip
-                        icon={PROJECT_STATUS_CONFIG[project.status]?.icon}
-                        label={PROJECT_STATUS_CONFIG[project.status]?.label}
-                        color={PROJECT_STATUS_CONFIG[project.status]?.color}
-                        size="small"
-                        sx={{ 
-                          fontWeight: '600',
-                          borderRadius: 1.5,
-                          backgroundColor: PROJECT_STATUS_CONFIG[project.status]?.bgColor,
-                          color: PROJECT_STATUS_CONFIG[project.status]?.textColor,
-                          border: 'none'
-                        }}
-                      />
-                      {/* Remove this duplicate Chip - keeping only the menu button */}
-                      <IconButton
-                        size="small"
-                        onClick={(e) => handleProjectMenuOpen(e, project)}
-                        sx={{
-                          '&:hover': {
-                            backgroundColor: 'action.selected'
-                          }
-                        }}
-                      >
-                        <MoreIcon />
-                      </IconButton>
-                    </Box>
-
-                    {/* Project Title - Make this the main clickable area */}
-                    <Box 
-                      onClick={() => navigate(`/team/${teamId}/project/${project.id}`)}
-                      sx={{ cursor: 'pointer', flex: 1 }}
-                    >
-                      <Typography 
-                        variant="h6" 
-                        component="h2" 
-                        sx={{ 
-                          mb: 2,
-                          fontWeight: '700',
-                          lineHeight: 1.3,
-                          display: '-webkit-box',
-                          WebkitLineClamp: 2,
-                          WebkitBoxOrient: 'vertical',
-                          overflow: 'hidden',
-                          minHeight: '2.6em'
-                        }}
-                      >
-                        {project.name}
-                      </Typography>
-
-                      {/* Project Description */}
-                      {project.description && (
-                        <Typography 
-                          variant="body2" 
-                          color="text.secondary" 
-                          sx={{ 
-                            mb: 3,
-                            lineHeight: 1.5,
-                            display: '-webkit-box',
-                            WebkitLineClamp: 3,
-                            WebkitBoxOrient: 'vertical',
-                            overflow: 'hidden',
-                            flex: 1
-                          }}
-                        >
-                          {project.description}
-                        </Typography>
-                      )}
-
-                      {/* Progress Bar */}
-                      <Box sx={{ mb: 2 }}>
-                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
-                          <Typography variant="caption" color="text.secondary" fontWeight="500">
-                            Progress
-                          </Typography>
-                          <Typography variant="caption" fontWeight="600" color="primary.main">
-                            {(project as any).progress || 0}%
-                          </Typography>
-                        </Box>
-                        <Box sx={{ 
-                          width: '100%', 
-                          height: 6, 
-                          backgroundColor: 'grey.200', 
-                          borderRadius: 3,
-                          overflow: 'hidden'
-                        }}>
-                          <Box 
-                            sx={{ 
-                              height: '100%', 
-                              backgroundColor: 'primary.main',
-                              width: `${(project as any).progress || 0}%`,
-                              transition: 'width 0.3s ease'
-                            }}
-                          />
-                        </Box>
-                      </Box>
-
-                      {/* Progress and Dates */}
-                      <Box sx={{ mb: 3 }}>
-                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
-                          <Typography variant="caption" color="text.secondary" fontWeight="500">
-                            Timeline
-                          </Typography>
-                          <Chip
-                            label={`${getDaysRemaining(project.end_date)} days left`}
-                            size="small"
-                            color={getProgressColor(getDaysRemaining(project.end_date)) as any}
-                            variant="outlined"
-                            sx={{ fontWeight: '500' }}
-                          />
-                        </Box>
-                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
-                          <CalendarIcon sx={{ color: 'text.secondary', fontSize: 16 }} />
-                          <Typography variant="caption" color="text.secondary">
-                            {formatDate(project.start_date)} - {formatDate(project.end_date)}
-                          </Typography>
-                        </Box>
-                      </Box>
-                    </Box>
-
-                    {/* Footer Stats */}
-                    <Box sx={{ 
-                      display: 'flex', 
-                      justifyContent: 'space-between', 
-                      alignItems: 'center',
-                      pt: 2,
-                      borderTop: '1px solid',
-                      borderColor: 'divider'
-                    }}>
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                        <GroupsIcon sx={{ color: 'text.secondary', fontSize: 18 }} />
-                        <Typography variant="caption" color="text.secondary" fontWeight="500">
-                          {project.member_count}
-                        </Typography>
-                      </Box>
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                        <TaskIcon sx={{ color: 'text.secondary', fontSize: 18 }} />
-                        <Typography variant="caption" color="text.secondary" fontWeight="500">
-                          {project.task_count}
-                        </Typography>
-                      </Box>
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                        <PersonIcon sx={{ color: 'text.secondary', fontSize: 16 }} />
-                        <Typography variant="caption" color="text.secondary">
-                          {project.created_by_name}
-                        </Typography>
-                      </Box>
-                    </Box>
-                  </CardContent>
-                </Card>
+              <ProjectListItem 
+                key={project.id} 
+                project={project} 
+                onMenuOpen={handleProjectMenuOpen}
+                onToggleFavorite={toggleFavorite}
+                isAllProjectsView={isAllProjectsView}
+              />
+            ))}
+          </Box>
+        ) : (
+          /* Grid/Compact View */
+          <Grid container spacing={isMobile ? 1.5 : 2}>
+            {filteredProjects.map((project) => (
+              <Grid item xs={getGridColumns()} key={project.id}>
+                <ProjectCard 
+                  project={project} 
+                  onMenuOpen={handleProjectMenuOpen}
+                  onToggleFavorite={toggleFavorite}
+                  isAllProjectsView={isAllProjectsView}
+                  compact={viewMode === 'compact'}
+                />
               </Grid>
             ))}
           </Grid>
-        ) : (
-          /* Enhanced List View */
-          <Paper 
-            sx={{ 
-              borderRadius: 3,
-              backgroundColor: 'white',
-              boxShadow: '0 4px 20px rgba(0, 0, 0, 0.08)',
-              border: '1px solid',
-              borderColor: 'divider',
-              overflow: 'hidden'
-            }}
-          >
-            {filteredProjects.map((project, index) => (
-              <Box key={project.id}>
-                <Box 
-                  sx={{ 
-                    p: 3,
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 3,
-                    cursor: 'pointer',
-                    transition: 'all 0.2s ease',
-                    '&:hover': {
-                      backgroundColor: 'grey.50'
-                    }
-                  }}
-                  onClick={() => navigate(`/team/${teamId}/project/${project.id}`)}
-                >
-                  <Box sx={{ flex: 1, minWidth: 0 }}>
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 1 }}>
-                      <Typography variant="h6" fontWeight="600" sx={{ flex: 1 }}>
-                        {project.name}
-                      </Typography>
-                      <Chip
-                        icon={PROJECT_STATUS_CONFIG[project.status]?.icon}
-                        label={PROJECT_STATUS_CONFIG[project.status]?.label}
-                        color={PROJECT_STATUS_CONFIG[project.status]?.color}
-                        size="small"
-                        sx={{ fontWeight: '600' }}
-                      />
-                    </Box>
-                    
-                    {project.description && (
-                      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                        {project.description}
-                      </Typography>
-                    )}
-
-                    <Box sx={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                        <CalendarIcon sx={{ color: 'text.secondary', fontSize: 16 }} />
-                        <Typography variant="caption" color="text.secondary">
-                          {formatDate(project.start_date)} - {formatDate(project.end_date)}
-                        </Typography>
-                      </Box>
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                        <GroupsIcon sx={{ color: 'text.secondary', fontSize: 16 }} />
-                        <Typography variant="caption" color="text.secondary">
-                          {project.member_count} members
-                        </Typography>
-                      </Box>
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                        <TaskIcon sx={{ color: 'text.secondary', fontSize: 16 }} />
-                        <Typography variant="caption" color="text.secondary">
-                          {project.task_count} tasks
-                        </Typography>
-                      </Box>
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                        <TrendingIcon sx={{ color: 'text.secondary', fontSize: 16 }} />
-                        <Typography variant="caption" color="text.secondary" fontWeight="500">
-                          {(project as any).progress || 0}% complete
-                        </Typography>
-                      </Box>
-                    </Box>
-                  </Box>
-
-                  <IconButton
-                    onClick={(e) => handleProjectMenuOpen(e, project)}
-                    sx={{
-                      '&:hover': {
-                        backgroundColor: 'action.selected'
-                      }
-                    }}
-                  >
-                    <MoreIcon />
-                  </IconButton>
-                </Box>
-                {index < filteredProjects.length - 1 && <Divider />}
-              </Box>
-            ))}
-          </Paper>
         )}
 
-        {/* Enhanced Create Project Dialog with all status options */}
-        <Dialog 
-          open={createDialogOpen} 
-          onClose={() => setCreateDialogOpen(false)} 
-          maxWidth="sm" 
-          fullWidth
-          PaperProps={{
-            sx: { 
-              borderRadius: 4,
-              overflow: 'hidden'
-            }
-          }}
-        >
-          <DialogTitle sx={{ 
-            backgroundColor: 'primary.main',
-            color: 'white',
-            fontWeight: '700',
-            py: 3
-          }}>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-              <RocketIcon />
-              Create New Project
-            </Box>
-          </DialogTitle>
-          <DialogContent sx={{ p: 4 }}>
-            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3, mt: 2 }}>
-              <TextField
-                label="Project Name"
-                required
-                fullWidth
-                value={projectData.name}
-                onChange={(e) => setProjectData({ ...projectData, name: e.target.value })}
-                placeholder="Enter project name"
-                sx={{ 
-                  '& .MuiOutlinedInput-root': { 
-                    borderRadius: 2,
-                    '&:hover fieldset': {
-                      borderColor: 'primary.main',
-                    }
-                  } 
-                }}
-              />
-              <TextField
-                label="Description"
-                multiline
-                rows={3}
-                fullWidth
-                value={projectData.description}
-                onChange={(e) => setProjectData({ ...projectData, description: e.target.value })}
-                placeholder="Describe your project goals and objectives"
-                sx={{ 
-                  '& .MuiOutlinedInput-root': { 
-                    borderRadius: 2,
-                    '&:hover fieldset': {
-                      borderColor: 'primary.main',
-                    }
-                  } 
-                }}
-              />
-              <Box sx={{ display: 'flex', gap: 2 }}>
-                <TextField
-                  label="Start Date"
-                  type="date"
-                  required
-                  fullWidth
-                  InputLabelProps={{ shrink: true }}
-                  value={projectData.start_date}
-                  onChange={(e) => setProjectData({ ...projectData, start_date: e.target.value })}
-                  sx={{ 
-                    '& .MuiOutlinedInput-root': { 
-                      borderRadius: 2,
-                    } 
-                  }}
-                />
-                <TextField
-                  label="End Date"
-                  type="date"
-                  required
-                  fullWidth
-                  InputLabelProps={{ shrink: true }}
-                  value={projectData.end_date}
-                  onChange={(e) => setProjectData({ ...projectData, end_date: e.target.value })}
-                  sx={{ 
-                    '& .MuiOutlinedInput-root': { 
-                      borderRadius: 2,
-                    } 
-                  }}
-                />
-              </Box>
-              <FormControl fullWidth>
-                <InputLabel>Initial Status</InputLabel>
-                <Select
-                  value={projectData.status}
-                  label="Initial Status"
-                  onChange={(e) => setProjectData({ ...projectData, status: e.target.value as number })}
-                  sx={{ borderRadius: 2 }}
-                >
-                  {Object.entries(PROJECT_STATUS_CONFIG).map(([status, config]) => (
-                    <MenuItem key={status} value={parseInt(status)}>
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                        {config.icon}
-                        {config.label}
-                      </Box>
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-            </Box>
-          </DialogContent>
-          <DialogActions sx={{ p: 4, gap: 2 }}>
-            <Button 
-              onClick={() => setCreateDialogOpen(false)}
-              sx={{ 
-                borderRadius: 2,
-                px: 4,
-                py: 1,
-                textTransform: 'none',
-                fontWeight: '500'
-              }}
-            >
-              Cancel
-            </Button>
-            <Button 
-              onClick={handleCreateProject} 
-              variant="contained"
-              disabled={!projectData.name || !projectData.start_date || !projectData.end_date || actionLoading}
-              startIcon={actionLoading ? <CircularProgress size={16} /> : <AddIcon />}
-              sx={{ 
-                borderRadius: 2,
-                px: 4,
-                py: 1,
-                textTransform: 'none',
-                fontWeight: '600',
-                boxShadow: '0 4px 12px rgba(37, 99, 235, 0.2)'
-              }}
-            >
-              {actionLoading ? 'Creating...' : 'Create Project'}
-            </Button>
-          </DialogActions>
-        </Dialog>
+        {/* Filter Drawer for Mobile */}
+        <FilterDrawer
+          open={filterDrawerOpen}
+          onClose={() => setFilterDrawerOpen(false)}
+          filters={filters}
+          onFilterChange={handleFilterChange}
+          teams={teams}
+          isAllProjectsView={isAllProjectsView}
+        />
 
-        {/* Enhanced Project Menu */}
+        {/* Dialogs and Menus */}
+        <CreateProjectDialog
+          open={createDialogOpen}
+          onClose={handleDialogClose}
+          onProjectCreated={handleCreateProject}
+          teamId={teamId}
+        />
+
+        {selectedProject && (
+          <EditProjectDialog
+            open={editDialogOpen}
+            onClose={handleDialogClose}
+            onProjectUpdated={handleProjectUpdated}
+            project={selectedProject}
+            teamId={selectedProject.team_id}
+            teams={teams}
+          />
+        )}
+
         <Menu
           anchorEl={projectMenuAnchor}
           open={Boolean(projectMenuAnchor)}
           onClose={handleProjectMenuClose}
+          anchorOrigin={{
+            vertical: 'bottom',
+            horizontal: 'right',
+          }}
+          transformOrigin={{
+            vertical: 'top',
+            horizontal: 'right',
+          }}
           PaperProps={{
             sx: { 
               borderRadius: 2,
-              minWidth: 200,
-              boxShadow: '0 8px 30px rgba(0, 0, 0, 0.12)'
+              minWidth: 180,
+              boxShadow: '0 8px 30px rgba(0, 0, 0, 0.12)',
+              mt: 0.5,
             }
           }}
         >
           <MenuItem 
             onClick={handleEditClick}
-            sx={{ py: 1.5 }}
+            sx={{ py: 1.2 }}
           >
             <ListItemIcon>
               <EditIcon fontSize="small" color="primary" />
@@ -1325,7 +1787,7 @@ const ProjectList: React.FC = () => {
           
           <MenuItem 
             onClick={handleSettingsClick}
-            sx={{ py: 1.5 }}
+            sx={{ py: 1.2 }}
           >
             <ListItemIcon>
               <SettingsIcon fontSize="small" color="primary" />
@@ -1335,25 +1797,12 @@ const ProjectList: React.FC = () => {
             </Typography>
           </MenuItem>
 
-          <MenuItem 
-            onClick={handleDuplicateProject}
-            disabled={actionLoading}
-            sx={{ py: 1.5 }}
-          >
-            <ListItemIcon>
-              <ShareIcon fontSize="small" color="primary" />
-            </ListItemIcon>
-            <Typography variant="body2" fontWeight="500">
-              {actionLoading ? 'Duplicating...' : 'Duplicate Project'}
-            </Typography>
-          </MenuItem>
-
           <Divider />
 
           <MenuItem 
             onClick={handleDeleteClick}
             sx={{ 
-              py: 1.5,
+              py: 1.2,
               color: 'error.main',
               '&:hover': {
                 backgroundColor: 'error.50',
@@ -1372,12 +1821,12 @@ const ProjectList: React.FC = () => {
         {/* Delete Confirmation Dialog */}
         <Dialog 
           open={deleteDialogOpen} 
-          onClose={() => setDeleteDialogOpen(false)} 
+          onClose={handleDialogClose}
           maxWidth="sm" 
           fullWidth
           PaperProps={{
             sx: { 
-              borderRadius: 4,
+              borderRadius: 3,
               overflow: 'hidden'
             }
           }}
@@ -1386,7 +1835,7 @@ const ProjectList: React.FC = () => {
             backgroundColor: 'error.main',
             color: 'white',
             fontWeight: '700',
-            py: 3
+            py: 2.5
           }}>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
               <DeleteIcon />
@@ -1394,12 +1843,12 @@ const ProjectList: React.FC = () => {
             </Box>
           </DialogTitle>
           
-          <DialogContent sx={{ p: 4 }}>
+          <DialogContent sx={{ p: 3 }}>
             <Alert 
               severity="warning" 
               sx={{ 
-                mb: 3, 
-                borderRadius: 2,
+                mb: 2, 
+                borderRadius: 1.5,
                 border: '1px solid',
                 borderColor: 'warning.light',
                 mt: 1
@@ -1419,7 +1868,7 @@ const ProjectList: React.FC = () => {
               placeholder={`Type "${selectedProject?.name || 'project name'}" to confirm`}
               sx={{ 
                 '& .MuiOutlinedInput-root': { 
-                  borderRadius: 2,
+                  borderRadius: 1.5,
                   '&:focus-within fieldset': {
                     borderColor: 'error.main',
                     borderWidth: 2
@@ -1429,13 +1878,13 @@ const ProjectList: React.FC = () => {
             />
           </DialogContent>
           
-          <DialogActions sx={{ p: 4, gap: 2 }}>
+          <DialogActions sx={{ p: 3, gap: 1 }}>
             <Button 
-              onClick={() => setDeleteDialogOpen(false)}
+              onClick={handleDialogClose}
               disabled={deleteLoading}
               sx={{ 
-                borderRadius: 2,
-                px: 4,
+                borderRadius: 1.5,
+                px: 3,
                 py: 1,
                 textTransform: 'none',
                 fontWeight: '500'
@@ -1451,8 +1900,8 @@ const ProjectList: React.FC = () => {
               color="error"
               startIcon={deleteLoading ? <CircularProgress size={16} color="inherit" /> : <DeleteIcon />}
               sx={{ 
-                borderRadius: 2,
-                px: 4,
+                borderRadius: 1.5,
+                px: 3,
                 py: 1,
                 textTransform: 'none',
                 fontWeight: '600'
@@ -1463,7 +1912,7 @@ const ProjectList: React.FC = () => {
           </DialogActions>
         </Dialog>
 
-        {/* Enhanced Snackbar */}
+        {/* Snackbar */}
         <Snackbar
           open={snackbar.open}
           autoHideDuration={6000}
@@ -1474,7 +1923,7 @@ const ProjectList: React.FC = () => {
             severity={snackbar.severity} 
             onClose={() => setSnackbar({ ...snackbar, open: false })}
             sx={{ 
-              borderRadius: 2,
+              borderRadius: 1.5,
               boxShadow: '0 8px 30px rgba(0, 0, 0, 0.12)',
               alignItems: 'center'
             }}
@@ -1492,11 +1941,11 @@ const ProjectList: React.FC = () => {
             onClick={() => setCreateDialogOpen(true)}
             sx={{
               position: 'fixed',
-              bottom: 24,
-              right: 24,
-              boxShadow: '0 8px 30px rgba(37, 99, 235, 0.3)',
+              bottom: 20,
+              right: 20,
+              boxShadow: '0 4px 20px rgba(37, 99, 235, 0.3)',
               '&:hover': {
-                boxShadow: '0 12px 40px rgba(37, 99, 235, 0.4)',
+                boxShadow: '0 6px 24px rgba(37, 99, 235, 0.4)',
               }
             }}
           >
