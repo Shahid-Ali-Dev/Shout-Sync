@@ -68,4 +68,7 @@ urlpatterns = [
     path('teams/<uuid:team_id>/members/optimized/', views.team_members_optimized_view, name='team-members-optimized'),
     path('teams/<uuid:team_id>/members/search/', views.search_team_members_view, name='search-team-members'),
     path('teams/<uuid:team_id>/projects/create-optimized/', views.create_project_optimized, name='create-project-optimized'),
+
+    path('teams/<uuid:team_id>/projects/<uuid:project_id>/favorite/', views.toggle_project_favorite_view, name='toggle-project-favorite'),
+    path('dashboard/stats/', views.user_dashboard_stats_view, name='user-dashboard-stats'),
 ]

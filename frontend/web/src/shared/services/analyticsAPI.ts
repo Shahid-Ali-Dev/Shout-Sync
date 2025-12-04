@@ -17,6 +17,8 @@ export const analyticsAPI = {
   // Export user data
   exportUserData: () => 
     api.get('/auth/analytics/export', { responseType: 'blob' }),
+
+  getDashboardStats: () => api.get('/auth/dashboard/stats/'),
 };
 
 export default analyticsAPI;

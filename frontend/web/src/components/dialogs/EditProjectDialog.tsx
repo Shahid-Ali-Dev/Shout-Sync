@@ -83,6 +83,27 @@ interface EditProjectDialogProps {
   teams?: Array<{ id: string; name: string; member_count: number }>;
 }
 
+// Place this BEFORE EditProjectDialog
+
+interface AssigneeItemProps {
+  assignee: Assignee;
+  currentUserId?: string;
+  projectCreatorId?: string;
+  isTeamAdmin: boolean;
+  userRole: string;
+  canEditAssignees: boolean;
+  canRemove: boolean;
+  canEditRole: boolean;
+  myRank: number;
+  index: number; // Make sure to add index here
+  disableAnimation: boolean; // <--- ADD THIS
+  onRoleChange: (userId: string, role: number) => void;
+  onRemove: (userId: string) => void;
+  formatLastActive: (date?: string) => string;
+  isUserOnline: (date?: string) => boolean;
+}
+
+
 interface Team {
   id: string;
   name: string;
@@ -207,8 +228,10 @@ const EditProjectDialog: React.FC<EditProjectDialogProps> = ({
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
   const { user } = useSelector((state: RootState) => state.auth);
+  const [listAnimationComplete, setListAnimationComplete] = useState(false);
   
   const [loading, setLoading] = useState(false);
+  
   const [saving, setSaving] = useState(false);
   const [availableTeams, setAvailableTeams] = useState<Team[]>([]);
   const [teamsLoading, setTeamsLoading] = useState(false);
@@ -234,7 +257,7 @@ const EditProjectDialog: React.FC<EditProjectDialogProps> = ({
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchInitiated, setSearchInitiated] = useState(false); // Track if search was initiated
   
-  const [userRole, setUserRole] = useState<'OWNER' | 'ADMIN' | 'MEMBER' | 'GUEST'>('GUEST');
+  const [userRole, setUserRole] = useState<'OWNER' | 'ADMIN' | 'MEMBER' | 'GUEST' | null>(null);
   const [permissionError, setPermissionError] = useState<string | null>(null);
 
   // Initialize projectData
@@ -261,6 +284,7 @@ const EditProjectDialog: React.FC<EditProjectDialogProps> = ({
     const isProjectContributor = projectRole === 1;
     const isAssigned = projectRole > 0;
     const isTeamAdmin = userRole === 'OWNER' || userRole === 'ADMIN';
+    const effectiveRole = userRole || 'GUEST';
 
     // 2. Define Permissions
     // Allow access if Team Admin OR Team Member OR Assigned to project
@@ -416,62 +440,74 @@ const EditProjectDialog: React.FC<EditProjectDialogProps> = ({
     }
   };
 
-  // Load teams when dialog opens
+// Optimized loadTeams
   const loadTeams = useCallback(async () => {
     try {
       setTeamsLoading(true);
-      
-      // First, determine which team to use
       const targetTeamId = project?.team?.id || teamId;
-      
-      // If we have teams passed as props, use them
-      if (teams.length > 0) {
-        setAvailableTeams(teams);
-      } else {
-        // Otherwise fetch all teams
-        const response = await teamAPI.getTeams();
-        setAvailableTeams(response.data);
+
+      // 1. Start fetching teams
+      const teamsPromise = teams.length > 0 
+        ? Promise.resolve({ data: teams }) 
+        : teamAPI.getTeams();
+
+      // 2. Start fetching members (for role check) if we have a team ID
+      // Note: We fetch minimal data to check role quickly
+      const membersPromise = targetTeamId 
+        ? teamAPI.getTeamMembers(targetTeamId)
+        : Promise.resolve({ data: [] });
+
+      // 3. Start fetching default members for UI list (Optimized endpoint)
+      const defaultsPromise = targetTeamId
+        ? teamAPI.getTeamMembersOptimized(targetTeamId, 1, 20)
+        : Promise.resolve({ data: { results: [], total: 0 } });
+
+      // WAIT for all to finish parallel execution
+      const [teamsRes, membersRes, defaultsRes] = await Promise.all([
+        teamsPromise,
+        membersPromise,
+        defaultsPromise
+      ]);
+
+      // Handle Teams
+      setAvailableTeams(teamsRes.data);
+
+      // Handle Role
+      if (targetTeamId && membersRes.data) {
+        const userMember = membersRes.data.find((m: any) => m.user.id === user?.id);
+        const roleMap: Record<number, 'OWNER' | 'ADMIN' | 'MEMBER' | 'GUEST'> = {
+          1: 'OWNER', 2: 'ADMIN', 3: 'MEMBER', 4: 'GUEST'
+        };
+        setUserRole(userMember ? roleMap[userMember.role] : 'GUEST');
       }
-      
-      // Load user's role
-      if (targetTeamId) {
-        try {
-          // Get user's role from team members
-          const membersResponse = await teamAPI.getTeamMembers(targetTeamId);
-          const userMember = membersResponse.data.find((m: any) => m.user.id === user?.id);
-          
-          if (userMember) {
-            // Map role number to role name
-            const roleMap: Record<number, 'OWNER' | 'ADMIN' | 'MEMBER' | 'GUEST'> = {
-              1: 'OWNER',
-              2: 'ADMIN',
-              3: 'MEMBER',
-              4: 'GUEST'
-            };
-            setUserRole(roleMap[userMember.role] || 'GUEST');
-          } else {
-            setUserRole('GUEST');
-          }
-          
-          // Load default members (most active/recent - limited to 10)
-          await loadDefaultMembers(targetTeamId);
-          
-        } catch (error) {
-          console.error('Failed to load team members:', error);
-          setUserRole('GUEST');
-        }
-      } else {
-        setUserRole('GUEST');
+
+      // Handle Default Members
+      if (defaultsRes.data?.results) {
+        const processedMembers = defaultsRes.data.results.map((member: any) => {
+           const user = member.user || member;
+           const lastActive = user.last_active || member.last_active || member.joined_at || user.created_at || null;
+           return {
+             id: user.id,
+             email: user.email,
+             first_name: user.first_name,
+             last_name: user.last_name,
+             avatar: user.avatar,
+             teamRole: member.role,
+             last_active: lastActive,
+           };
+        });
+        setDefaultMembers(processedMembers);
+        setTotalMembers(defaultsRes.data.total || 0);
       }
+
     } catch (error) {
-      console.error('Failed to load teams:', error);
-      setError('Failed to load teams. Please try again.');
-      setUserRole('GUEST');
+      console.error('Failed to load initial data:', error);
+      setError('Failed to load project data.');
     } finally {
       setTeamsLoading(false);
     }
   }, [teams, project?.team?.id, teamId, user]);
-
+  
   // FIXED: Enhanced loadDefaultMembers function
   const loadDefaultMembers = async (teamId: string) => {
     try {
@@ -575,6 +611,19 @@ const EditProjectDialog: React.FC<EditProjectDialogProps> = ({
       setPermissionError(null);
     }
   }, [open, project, teamId, loadTeams]);
+
+  // Find this useEffect near the top of your component and replace it
+    useEffect(() => {
+      if (activeTab === 1) { 
+        // Only set the timer to DISABLE animation. 
+        // We handle the 'enable' part in the Tab onChange now.
+        const timer = setTimeout(() => {
+          setListAnimationComplete(true);
+        }, 800);
+        
+        return () => clearTimeout(timer);
+      }
+    }, [activeTab]);
 
   // Check permissions when dialog opens
     useEffect(() => {
@@ -876,7 +925,100 @@ const EditProjectDialog: React.FC<EditProjectDialogProps> = ({
       )
     );
   };
+// Memoized component to prevent re-renders of the whole list
+const AssigneeRow = React.memo(({ 
+  assignee, index, disableAnimation, // <--- Destructure new props
+  currentUserId, projectCreatorId, isTeamAdmin, userRole, 
+  canEditAssignees, canRemove, canEditRole, myRank, 
+  onRoleChange, onRemove, formatLastActive, isUserOnline 
+}: AssigneeItemProps) => {
+  const isMe = assignee.user.id === currentUserId;
+  const isProjectCreator = assignee.user.id === projectCreatorId;
 
+  return (
+    <Grow 
+      in={true} 
+      // LOGIC: If animation is disabled (after load), timeout is 0 (instant).
+      // Otherwise, use the staggered calculation.
+      timeout={disableAnimation ? 0 : (index + 1) * 100} 
+    >
+      <Paper sx={{ p: 2, borderRadius: 2, backgroundColor: 'white', border: '1px solid', borderColor: isMe ? 'primary.main' : 'divider', boxShadow: isMe ? '0 2px 8px rgba(79, 70, 229, 0.15)' : '0 1px 3px rgba(0, 0, 0, 0.08)', transition: 'all 0.3s ease', '&:hover': { boxShadow: '0 4px 12px rgba(0, 0, 0, 0.12)', transform: 'translateY(-1px)' } }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 2 }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flex: 1 }}>
+            <Box sx={{ position: 'relative', display: 'inline-flex' }}>
+              <Avatar src={assignee.user.avatar || undefined} sx={{ width: 48, height: 48, border: isMe ? '2px solid #4f46e5' : 'none' }}>
+                {assignee.user.first_name?.[0]}{assignee.user.last_name?.[0]}
+              </Avatar>
+              {assignee.user.last_active && isUserOnline(assignee.user.last_active) && (
+                <Box sx={{ position: 'absolute', bottom: 0, right: 0, width: 16, height: 16, backgroundColor: '#10B981', border: '2px solid white', borderRadius: '50%', boxShadow: '0 2px 6px rgba(0, 0, 0, 0.3)', zIndex: 2 }} />
+              )}
+            </Box>
+            <Box sx={{ flex: 1 }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
+                <Typography variant="subtitle1" fontWeight="600">
+                  {assignee.user.first_name} {assignee.user.last_name}
+                </Typography>
+                {isMe && <Chip label="You" size="small" sx={{ backgroundColor: 'primary.50', color: 'primary.main', fontWeight: 500, height: 20 }} />}
+                {isProjectCreator && <Chip label="Creator" size="small" sx={{ backgroundColor: 'warning.50', color: 'warning.main', fontWeight: 500, height: 20 }} />}
+                {assignee.isLead && <Tooltip title="Project Lead"><StarIcon sx={{ color: 'warning.main', fontSize: 18 }} /></Tooltip>}
+              </Box>
+              <Typography variant="caption" color="text.secondary">{assignee.user.email}</Typography>
+              {assignee.user.last_active && (
+                <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.5 }}>
+                  {isUserOnline(assignee.user.last_active) ? <Box component="span" sx={{ color: 'success.main', fontWeight: 600 }}>Online</Box> : `Last active: ${formatLastActive(assignee.user.last_active)}`}
+                </Typography>
+              )}
+            </Box>
+          </Box>
+          
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+            <FormControl size="small" sx={{ minWidth: 140 }}>
+              <Select
+                value={assignee.role}
+                onChange={(e) => onRoleChange(assignee.user.id, e.target.value as number)}
+                disabled={!canEditAssignees || !canEditRole}
+                sx={{ borderRadius: 2, '& .MuiOutlinedInput-notchedOutline': { borderColor: '#e5e7eb' } }}
+                renderValue={(value) => {
+                  const role = ASSIGNEE_ROLES.find(r => r.value === value);
+                  return (
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                      {role?.icon}
+                      <Typography variant="body2" fontWeight="500">{role?.label}</Typography>
+                    </Box>
+                  );
+                }}
+              >
+                {ASSIGNEE_ROLES.map((role) => {
+                  const isRoleTooHigh = role.value > myRank;
+                  return (
+                    <MenuItem key={role.value} value={role.value} disabled={isRoleTooHigh}>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, py: 0.5, opacity: isRoleTooHigh ? 0.5 : 1 }}>
+                        <Box sx={{ width: 32, height: 32, borderRadius: '50%', backgroundColor: `${role.badgeColor}15`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                          {role.icon}
+                        </Box>
+                        <Box>
+                          <Typography variant="body2" fontWeight="500">{role.label}</Typography>
+                          {isRoleTooHigh ? <Typography variant="caption" color="error" sx={{fontSize: '0.65rem'}}>(Requires higher role)</Typography> : <Typography variant="caption" color="text.secondary">{role.description}</Typography>}
+                        </Box>
+                      </Box>
+                    </MenuItem>
+                  );
+                })}
+              </Select>
+            </FormControl>
+            {canEditAssignees && canRemove && (
+              <Tooltip title={isMe ? "Remove myself" : "Remove member"}>
+                <IconButton size="small" onClick={() => onRemove(assignee.user.id)} sx={{ color: 'error.main', backgroundColor: 'error.50', '&:hover': { backgroundColor: 'error.100' } }}>
+                  <PersonRemoveIcon fontSize="small" />
+                </IconButton>
+              </Tooltip>
+            )}
+          </Box>
+        </Box>
+      </Paper>
+    </Grow>
+  );
+});
   // Get available team members from search results (excluding already selected)
   const getAvailableMembers = useMemo(() => {
     return searchResults.filter(member => 
@@ -1056,7 +1198,9 @@ const EditProjectDialog: React.FC<EditProjectDialogProps> = ({
     setSearchResults([]);
     setSearchOpen(false);
     setSearchInitiated(false);
+    setUserRole(null); 
     onClose();
+    
   };
 
   const loadMoreMembers = () => {
@@ -1182,20 +1326,31 @@ const EditProjectDialog: React.FC<EditProjectDialogProps> = ({
             <Typography variant="h5" fontWeight="800">
               Edit Project
             </Typography>
-            {currentTeam && (
-              <Typography variant="caption" sx={{ opacity: 0.9, display: 'block', mt: 0.5 }}>
-                <Box component="span" sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5 }}>
-                  <WorkspacesIcon sx={{ fontSize: 12 }} />
-                  {currentTeam.name}
-                </Box>
-                {' • '}
-                <Box component="span" sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5 }}>
-                  <EmojiPeopleIcon sx={{ fontSize: 12 }} />
-                  Your role: {isAssigned 
-                    ? `${ASSIGNEE_ROLES.find(r => r.value === projectRole)?.label} (Project)` 
-                    : `${userRoleName} (Team)`}
-                </Box>
-              </Typography>
+            
+            {/* CONDITIONAL RENDERING: Show Skeleton if loading or role is unknown */}
+            {teamsLoading || userRole === null ? (
+              <Box sx={{ mt: 0.5, display: 'flex', alignItems: 'center', gap: 1 }}>
+                <Skeleton variant="text" width={100} height={20} />
+                <Skeleton variant="circular" width={4} height={4} />
+                <Skeleton variant="text" width={120} height={20} />
+              </Box>
+            ) : (
+              // Actual Content
+              currentTeam && (
+                <Typography variant="caption" sx={{ opacity: 0.9, display: 'block', mt: 0.5 }}>
+                  <Box component="span" sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5 }}>
+                    <WorkspacesIcon sx={{ fontSize: 12 }} />
+                    {currentTeam.name}
+                  </Box>
+                  {' • '}
+                  <Box component="span" sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5 }}>
+                    <EmojiPeopleIcon sx={{ fontSize: 12 }} />
+                    Your role: {isAssigned 
+                      ? `${ASSIGNEE_ROLES.find(r => r.value === projectRole)?.label} (Project)` 
+                      : `${userRole === 'OWNER' ? 'Owner' : userRole === 'ADMIN' ? 'Admin' : userRole === 'MEMBER' ? 'Member' : 'Guest'} (Team)`}
+                  </Box>
+                </Typography>
+              )
             )}
           </Box>
         </Box>
@@ -1217,7 +1372,7 @@ const EditProjectDialog: React.FC<EditProjectDialogProps> = ({
       </DialogTitle>
 
       {/* Permission Error Alert */}
-      {permissionError && (
+      {!teamsLoading && userRole !== null && permissionError && (
         <Alert 
           severity="warning" 
           sx={{ 
@@ -1285,6 +1440,12 @@ const EditProjectDialog: React.FC<EditProjectDialogProps> = ({
           value={activeTab} 
           onChange={(e, newValue) => {
             setActiveTab(newValue);
+            
+            // FIX: Reset animation state immediately when entering Team tab
+            if (newValue === 1) {
+              setListAnimationComplete(false); 
+            }
+
             // Close search dropdown when changing tabs
             setSearchOpen(false);
             setSearchQuery('');
@@ -1656,236 +1817,39 @@ const EditProjectDialog: React.FC<EditProjectDialogProps> = ({
                     </Typography>
                   </Box>
                 ) : (
-                <Stack spacing={2}>
+                <Stack spacing={2} key={`assignees-list-${activeTab}`}> 
                   {assignees.map((assignee, index) => {
                     const isMe = assignee.user.id === user?.id;
-                    const isTeamAdmin = userRole === 'OWNER' || userRole === 'ADMIN';
                     const isProjectCreator = assignee.user.id === project?.created_by?.id;
                     
-                    // Calculate if I have rank permission over this user (Rank Logic)
+                    // Permission calcs
                     const canManageTarget = canManageTargetUser(assignee.user.id, assignee.role);
-
-                    // LOGIC: Role Editing
-                    // 1. Team Admins/Owners can ALWAYS edit themselves.
-                    // 2. Team Admins/Owners can edit others (unless target is Creator and I am not Owner).
-                    // 3. Regular users can NEVER edit themselves.
-                    // 4. Regular users can edit others only if they outrank them.
                     const canEditRole = isTeamAdmin 
                       ? (isMe || !isProjectCreator || userRole === 'OWNER')
                       : (!isMe && canManageTarget);
-
-                    // LOGIC: Removing Member
-                    // 1. Team Admins/Owners can ALWAYS remove themselves.
-                    // 2. Team Admins/Owners can remove others (unless target is Creator and I am not Owner).
-                    // 3. Regular users can NEVER remove themselves.
-                    // 4. Regular users can remove others only if they outrank them.
                     const canRemove = isTeamAdmin
                       ? (isMe || !isProjectCreator || userRole === 'OWNER')
                       : (!isMe && canManageTarget);
 
                     return (
-                      <Grow in={true} timeout={(index + 1) * 100} key={assignee.user.id}>
-                        <Paper 
-                          sx={{ 
-                            p: 2, 
-                            borderRadius: 2,
-                            backgroundColor: 'white',
-                            border: '1px solid',
-                            borderColor: isMe ? 'primary.main' : 'divider',
-                            boxShadow: isMe 
-                              ? '0 2px 8px rgba(79, 70, 229, 0.15)' 
-                              : '0 1px 3px rgba(0, 0, 0, 0.08)',
-                            transition: 'all 0.3s ease',
-                            '&:hover': {
-                              boxShadow: '0 4px 12px rgba(0, 0, 0, 0.12)',
-                              transform: 'translateY(-1px)',
-                            }
-                          }}
-                        >
-                          <Box sx={{ 
-                            display: 'flex', 
-                            alignItems: 'center', 
-                            justifyContent: 'space-between',
-                            gap: 2,
-                          }}>
-                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flex: 1 }}>
-                              <Box sx={{ position: 'relative', display: 'inline-flex' }}>
-                                <Avatar 
-                                  src={assignee.user.avatar || undefined}
-                                  sx={{ 
-                                    width: 48, 
-                                    height: 48,
-                                    border: isMe ? '2px solid #4f46e5' : 'none',
-                                  }}
-                                >
-                                  {assignee.user.first_name?.[0]}{assignee.user.last_name?.[0]}
-                                </Avatar>
-                                {/* Online status badge */}
-                                {assignee.user.last_active && isUserOnline(assignee.user.last_active) && (
-                                  <Box
-                                    sx={{
-                                      position: 'absolute',
-                                      bottom: 0,
-                                      right: 0,
-                                      width: 16,
-                                      height: 16,
-                                      backgroundColor: '#10B981',
-                                      border: '2px solid white',
-                                      borderRadius: '50%',
-                                      boxShadow: '0 2px 6px rgba(0, 0, 0, 0.3)',
-                                      zIndex: 2,
-                                    }}
-                                  />
-                                )}
-                              </Box>
-                              <Box sx={{ flex: 1 }}>
-                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
-                                  <Typography variant="subtitle1" fontWeight="600">
-                                    {assignee.user.first_name} {assignee.user.last_name}
-                                  </Typography>
-                                  {isMe && (
-                                    <Chip 
-                                      label="You" 
-                                      size="small" 
-                                      sx={{ 
-                                        backgroundColor: 'primary.50',
-                                        color: 'primary.main',
-                                        fontWeight: 500,
-                                        height: 20,
-                                      }} 
-                                    />
-                                  )}
-                                  {isProjectCreator && (
-                                    <Chip 
-                                      label="Creator" 
-                                      size="small" 
-                                      sx={{ 
-                                        backgroundColor: 'warning.50',
-                                        color: 'warning.main',
-                                        fontWeight: 500,
-                                        height: 20,
-                                      }} 
-                                    />
-                                  )}
-                                  {assignee.isLead && (
-                                    <Tooltip title="Project Lead">
-                                      <StarIcon sx={{ color: 'warning.main', fontSize: 18 }} />
-                                    </Tooltip>
-                                  )}
-                                </Box>
-                                <Typography variant="caption" color="text.secondary">
-                                  {assignee.user.email}
-                                </Typography>
-                                {assignee.user.last_active && (
-                                  <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.5 }}>
-                                    {isUserOnline(assignee.user.last_active) ? (
-                                      <Box component="span" sx={{ color: 'success.main', fontWeight: 600 }}>
-                                        Online
-                                      </Box>
-                                    ) : (
-                                      `Last active: ${formatLastActive(assignee.user.last_active)}`
-                                    )}
-                                  </Typography>
-                                )}
-                              </Box>
-                            </Box>
-                            
-                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                              <FormControl size="small" sx={{ minWidth: 140 }}>
-                                <Select
-                                  value={assignee.role}
-                                  onChange={(e) => handleUpdateAssigneeRole(assignee.user.id, e.target.value as number)}
-                                  disabled={!canEditAssignees || !canEditRole}
-                                  sx={{ 
-                                    borderRadius: 2,
-                                    '& .MuiOutlinedInput-notchedOutline': {
-                                      borderColor: '#e5e7eb',
-                                    }
-                                  }}
-                                  renderValue={(value) => {
-                                    const role = ASSIGNEE_ROLES.find(r => r.value === value);
-                                    return (
-                                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                        {role?.icon}
-                                        <Typography variant="body2" fontWeight="500">
-                                          {role?.label}
-                                        </Typography>
-                                      </Box>
-                                    );
-                                  }}
-                                >
-                                  {ASSIGNEE_ROLES.map((role) => {
-                                    // FILTER LOGIC:
-                                    // I can only promote someone up to my own rank.
-                                    const isRoleTooHigh = role.value > myRank;
-                                    
-                                    return (
-                                      <MenuItem 
-                                        key={role.value} 
-                                        value={role.value}
-                                        disabled={isRoleTooHigh}
-                                      >
-                                        <Box sx={{ 
-                                          display: 'flex', 
-                                          alignItems: 'center', 
-                                          gap: 2, 
-                                          py: 0.5,
-                                          opacity: isRoleTooHigh ? 0.5 : 1 
-                                        }}>
-                                          <Box sx={{ 
-                                            width: 32, 
-                                            height: 32, 
-                                            borderRadius: '50%',
-                                            backgroundColor: `${role.badgeColor}15`,
-                                            display: 'flex',
-                                            alignItems: 'center',
-                                            justifyContent: 'center',
-                                          }}>
-                                            {role.icon}
-                                          </Box>
-                                          <Box>
-                                            <Typography variant="body2" fontWeight="500">
-                                              {role.label}
-                                            </Typography>
-                                            {isRoleTooHigh ? (
-                                              <Typography variant="caption" color="error" sx={{fontSize: '0.65rem'}}>
-                                                (Requires higher role)
-                                              </Typography>
-                                            ) : (
-                                              <Typography variant="caption" color="text.secondary">
-                                                {role.description}
-                                              </Typography>
-                                            )}
-                                          </Box>
-                                        </Box>
-                                      </MenuItem>
-                                    );
-                                  })}
-                                </Select>
-                              </FormControl>
-                              
-                              {/* REMOVE BUTTON LOGIC */}
-                              {canEditAssignees && canRemove && (
-                                <Tooltip title={isMe ? "Remove myself from project" : "Remove member"}>
-                                  <IconButton 
-                                    size="small" 
-                                    onClick={() => handleRemoveAssignee(assignee.user.id)}
-                                    sx={{ 
-                                      color: 'error.main',
-                                      backgroundColor: 'error.50',
-                                      '&:hover': {
-                                        backgroundColor: 'error.100',
-                                      }
-                                    }}
-                                  >
-                                    <PersonRemoveIcon fontSize="small" />
-                                  </IconButton>
-                                </Tooltip>
-                              )}
-                            </Box>
-                          </Box>
-                        </Paper>
-                      </Grow>
+                      <AssigneeRow
+                        key={assignee.user.id}
+                        index={index}
+                        disableAnimation={listAnimationComplete}
+                        assignee={assignee}
+                        currentUserId={user?.id}
+                        projectCreatorId={project?.created_by?.id}
+                        isTeamAdmin={isTeamAdmin}
+                        userRole={userRole || 'GUEST'}
+                        canEditAssignees={canEditAssignees}
+                        canRemove={canRemove}
+                        canEditRole={canEditRole}
+                        myRank={myRank}
+                        onRoleChange={handleUpdateAssigneeRole}
+                        onRemove={handleRemoveAssignee}
+                        formatLastActive={formatLastActive}
+                        isUserOnline={isUserOnline}
+                      />
                     );
                   })}
                 </Stack>
@@ -1969,131 +1933,100 @@ const EditProjectDialog: React.FC<EditProjectDialogProps> = ({
                           />
                           
                           {/* FIXED: Enhanced search dropdown */}
-                          <ClickAwayListener onClickAway={handleClickAway}>
+<ClickAwayListener onClickAway={handleClickAway}>
                             <Popper
                               open={searchOpen}
                               anchorEl={searchAnchorRef.current}
                               placement="bottom-start"
                               className="search-dropdown"
-                              disablePortal={true} // Add this to keep it in DOM hierarchy
+                              disablePortal={true}
                               modifiers={[
-                                {
-                                  name: 'flip',
-                                  enabled: false, // Disable auto-flipping
-                                },
+                                { name: 'flip', enabled: false },
                                 {
                                   name: 'preventOverflow',
                                   enabled: true,
-                                  options: {
-                                    boundary: 'scrollParent', // Use scrollParent instead of viewport
-                                    padding: 8,
-                                  },
+                                  options: { boundary: 'scrollParent', padding: 8 },
                                 },
-                                {
-                                  name: 'offset',
-                                  options: {
-                                    offset: [0, 8], // 8px gap between input and dropdown
-                                  },
-                                },
-                                {
-                                  name: 'computeStyles',
-                                  options: {
-                                    gpuAcceleration: false, // Better performance for fixed positioning
-                                  },
-                                },
+                                { name: 'offset', options: { offset: [0, 8] } },
+                                { name: 'computeStyles', options: { gpuAcceleration: false } },
                               ]}
                               style={{ 
                                 zIndex: 1500,
                                 width: searchAnchorRef.current?.clientWidth,
                                 maxHeight: 400,
                                 overflowY: 'auto',
-                                position: 'fixed', // Change from default to fixed for consistent positioning
+                                position: 'fixed',
                               }}
                               transition
                             >
                               {({ TransitionProps }) => (
                                 <Fade {...TransitionProps} timeout={200}>
-                                  <Paper sx={{ 
-                                    borderRadius: 2,
-                                    boxShadow: 'none',
-                                    border: '1px solid',
-                                    borderColor: 'divider',
-                                    overflow: 'hidden',
-                                  }}>
-                                    {/* Header with info */}
+                                  <Paper 
+                                    elevation={0}
+                                    sx={{ 
+                                      borderRadius: 2,
+                                      boxShadow: 'none',
+                                      border: '1px solid',
+                                      borderColor: 'divider',
+                                      overflow: 'hidden',
+                                      backgroundColor: 'white',
+                                      position: 'relative' // Needed for absolute positioning of progress bar
+                                    }}
+                                  >
+                                    {/* FIXED: Progress bar is now absolute so it doesn't push content down */}
+                                    {searchLoading && (
+                                      <LinearProgress 
+                                        sx={{ 
+                                          position: 'absolute',
+                                          top: 0,
+                                          left: 0,
+                                          right: 0,
+                                          height: 3,
+                                          zIndex: 2
+                                        }} 
+                                      />
+                                    )}
+
+                                    {/* Header */}
                                     <Box sx={{ 
                                       p: 2, 
                                       borderBottom: '1px solid', 
                                       borderColor: 'divider',
-                                      backgroundColor: 'grey.50'
+                                      backgroundColor: 'grey.50',
+                                      display: 'flex',
+                                      justifyContent: 'space-between',
+                                      alignItems: 'center'
                                     }}>
                                       <Typography variant="caption" color="text.secondary">
                                         {searchQuery 
                                           ? `Search results for "${searchQuery}"`
-                                          : `Recently active team members (${defaultMembers.length} shown)`}
+                                          : `Recently active (${defaultMembers.length})`}
                                       </Typography>
                                     </Box>
                                     
-                                    {/* Loading state */}
-                                    {searchLoading ? (
-                                      <Box sx={{ p: 3, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                                        <CircularProgress size={24} sx={{ mb: 2 }} />
-                                        <Typography variant="caption" color="text.secondary">
-                                          Searching...
-                                        </Typography>
-                                      </Box>
-                                    ) : getAvailableMembers.length === 0 ? (
-                                      <Box sx={{ p: 3, textAlign: 'center' }}>
-                                        {searchQuery ? (
-                                          <>
-                                            <SearchIcon sx={{ fontSize: 48, color: 'text.secondary', mb: 2, opacity: 0.5 }} />
-                                            <Typography variant="body2" color="text.secondary" gutterBottom>
-                                              No members found for "{searchQuery}"
-                                            </Typography>
-                                            <Typography variant="caption" color="text.secondary">
-                                              Try a different search term
-                                            </Typography>
-                                          </>
-                                        ) : loadingDefaultMembers ? (
-                                          <CircularProgress size={24} />
-                                        ) : (
-                                          <>
-                                            <GroupsIcon sx={{ fontSize: 48, color: 'text.secondary', mb: 2, opacity: 0.5 }} />
-                                            <Typography variant="body2" color="text.secondary">
-                                              No team members available
-                                            </Typography>
-                                          </>
-                                        )}
-                                      </Box>
-                                    ) : (
+                                    {/* Content Logic */}
+                                    {getAvailableMembers.length > 0 ? (
                                       <>
                                         <List 
                                             dense 
                                             disablePadding  
                                             sx={{ 
                                               maxHeight: 320, 
-                                              overflowY: 'auto' 
+                                              overflowY: 'auto',
+                                              opacity: searchLoading ? 0.6 : 1,
+                                              transition: 'opacity 0.2s' 
                                             }}
                                           >
-                                        {getAvailableMembers.map((member, index) => (
+                                        {getAvailableMembers.map((member) => (
                                           <ListItem 
                                             key={member.id}
                                             button
                                             onClick={() => handleAddAssignee(member)}
                                             sx={{
-                                              '&:hover': {
-                                                backgroundColor: 'action.hover',
-                                              },
-                                              transition: 'background-color 0.2s ease',
-                                              // REMOVED: opacity: 0
-                                              // REMOVED: animation: fadeIn... 
-                                              // If you want animation, use the Grow component like you did for selected members, 
-                                              // or simply remove the opacity rule so it defaults to visible (opacity: 1).
+                                              '&:hover': { backgroundColor: 'action.hover' },
                                               borderBottom: '1px solid',
                                               borderColor: 'divider',
-                                              '&:last-child': {
-                                                borderBottom: 'none'
-                                              }
+                                              '&:last-child': { borderBottom: 'none' }
                                             }}
                                           >
                                             <ListItemAvatar>
@@ -2104,20 +2037,10 @@ const EditProjectDialog: React.FC<EditProjectDialogProps> = ({
                                                 >
                                                   {member.first_name?.[0]}{member.last_name?.[0]}
                                                 </Avatar>
-                                                
-                                                {/* Online Badge */}
                                                 {member.last_active && isUserOnline(member.last_active) && (
-                                                  <Box
-                                                    sx={{
-                                                      position: 'absolute',
-                                                      bottom: 0,
-                                                      right: 0,
-                                                      width: 12,
-                                                      height: 12,
-                                                      backgroundColor: '#10B981',
-                                                      border: '1px solid white',
-                                                      borderRadius: '50%',
-                                                      boxShadow: '0 2px 4px rgba(0, 0, 0, 0.2)',
+                                                  <Box sx={{
+                                                      position: 'absolute', bottom: 0, right: 0, width: 12, height: 12,
+                                                      backgroundColor: '#10B981', border: '1px solid white', borderRadius: '50%',
                                                       zIndex: 2,
                                                     }}
                                                   />
@@ -2135,6 +2058,7 @@ const EditProjectDialog: React.FC<EditProjectDialogProps> = ({
                                                     <Typography variant="caption" color="text.secondary" display="block">
                                                       {member.email}
                                                     </Typography>
+                                                    {/* FIXED: Restored Last Active / Online status */}
                                                     {member.last_active && (
                                                       <Typography 
                                                         variant="caption" 
@@ -2157,8 +2081,9 @@ const EditProjectDialog: React.FC<EditProjectDialogProps> = ({
                                             </ListItemSecondaryAction>
                                           </ListItem>
                                         ))}
-                   
                                         </List>
+                                        
+                                        {/* Load More Button */}
                                         {hasMoreMembers && searchQuery && (
                                           <Box sx={{ p: 2, textAlign: 'center', borderTop: '1px solid', borderColor: 'divider' }}>
                                             <Button 
@@ -2173,6 +2098,29 @@ const EditProjectDialog: React.FC<EditProjectDialogProps> = ({
                                           </Box>
                                         )}
                                       </>
+                                    ) : (
+                                      /* Empty State */
+                                      <Box sx={{ p: 3, textAlign: 'center' }}>
+                                        {searchLoading ? (
+                                          <Box sx={{ py: 2 }}>
+                                            <CircularProgress size={20} />
+                                            <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 1 }}>
+                                              Searching...
+                                            </Typography>
+                                          </Box>
+                                        ) : searchQuery ? (
+                                          <>
+                                            <SearchIcon sx={{ fontSize: 48, color: 'text.secondary', mb: 2, opacity: 0.5 }} />
+                                            <Typography variant="body2" color="text.secondary">
+                                              No members found for "{searchQuery}"
+                                            </Typography>
+                                          </>
+                                        ) : (
+                                          <Typography variant="body2" color="text.secondary">
+                                            No team members available
+                                          </Typography>
+                                        )}
+                                      </Box>
                                     )}
                                   </Paper>
                                 </Fade>

@@ -239,7 +239,8 @@ const PRIORITY_CONFIG: Record<number, PriorityConfig> = {
   },
 };
 
-// --- UTILITY FUNCTIONS (MOVED OUTSIDE) ---
+
+// --- UTILITY FUNCTIONS ---
 const formatDate = (dateString: string) => {
   return new Date(dateString).toLocaleDateString('en-US', {
     year: 'numeric',
@@ -794,6 +795,8 @@ const ProjectList: React.FC = () => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
   const isSmallMobile = useMediaQuery('(max-width: 480px)');
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(true);
   const isTablet = useMediaQuery('(max-width: 900px)');
   const { user } = useSelector((state: RootState) => state.auth);
   
@@ -850,93 +853,161 @@ const ProjectList: React.FC = () => {
     }
   }, [isMobile, isSmallMobile]);
 
-  const loadProjects = async () => {
+  const calculatePriority = (project: Project): number => {
+    if (project.status === ProjectStatus.COMPLETED || project.status === ProjectStatus.CANCELLED) return 1;
+    const daysRemaining = getDaysRemaining(project.end_date);
+    if (daysRemaining < 0) return 4;
+    if (daysRemaining < 3) return 4;
+    if (daysRemaining < 7) return 3;
+    if (daysRemaining < 14) return 2;
+    return 1;
+  };
+
+  const calculateProjectProgress = (project: Project): number => {
+    if (project.status === ProjectStatus.COMPLETED) return 100;
+    if (project.status === ProjectStatus.CANCELLED) return 0;
+    const start = new Date(project.start_date).getTime();
+    const end = new Date(project.end_date).getTime();
+    const now = new Date().getTime();
+    if (now >= end) return 100;
+    if (now <= start) return 0;
+    const totalDuration = end - start;
+    const elapsed = now - start;
+    return Math.min(Math.round((elapsed / totalDuration) * 100), 95);
+  };
+
+const loadProjects = async (reset = false) => {
     try {
-      setLoading(true);
-      setRefreshing(true);
-      let projectsData: EnhancedProject[] = [];
+      // 1. Set loading state
+      if (reset) {
+        setLoading(true);
+        setRefreshing(true);
+      }
+      
+      // 2. Determine page to fetch
+      const currentPage = reset ? 1 : page;
+      
+      let newProjects: EnhancedProject[] = [];
 
-      const calculatePriority = (project: Project): number => {
-        if (project.status === ProjectStatus.COMPLETED || project.status === ProjectStatus.CANCELLED) return 1;
-        const daysRemaining = getDaysRemaining(project.end_date);
-        if (daysRemaining < 0) return 4;
-        if (daysRemaining < 3) return 4;
-        if (daysRemaining < 7) return 3;
-        if (daysRemaining < 14) return 2;
-        return 1;
+      // --- Helper: Transform API data to EnhancedProject ---
+      const transformProjectData = (project: Project, teamData?: Team): EnhancedProject => {
+        // Calculate Progress
+        let progress = 0;
+        if (project.status === ProjectStatus.COMPLETED) progress = 100;
+        else if (project.status === ProjectStatus.CANCELLED) progress = 0;
+        else {
+          const start = new Date(project.start_date).getTime();
+          const end = new Date(project.end_date).getTime();
+          const now = new Date().getTime();
+          if (now >= end) progress = 100;
+          else if (now > start) {
+            const total = end - start;
+            const elapsed = now - start;
+            progress = Math.min(Math.round((elapsed / total) * 100), 95);
+          }
+        }
+
+        // Calculate Priority
+        let priority = 1;
+        if (project.status !== ProjectStatus.COMPLETED && project.status !== ProjectStatus.CANCELLED) {
+           const days = getDaysRemaining(project.end_date);
+           if (days < 0) priority = 4;
+           else if (days < 3) priority = 4;
+           else if (days < 7) priority = 3;
+           else if (days < 14) priority = 2;
+        }
+
+        return {
+          ...project,
+          progress,
+          daysRemaining: getDaysRemaining(project.end_date),
+          team_name: teamData?.name || project.team_name,
+          team_id: teamData?.id || project.team,
+          member_count: project.member_count || 0,
+          task_count: project.task_count || 0,
+          is_favorite: project.is_favorite, // Uses backend value
+          priority,
+        };
       };
 
-      const calculateProjectProgress = (project: Project): number => {
-        if (project.status === ProjectStatus.COMPLETED) return 100;
-        if (project.status === ProjectStatus.CANCELLED) return 0;
-        const start = new Date(project.start_date).getTime();
-        const end = new Date(project.end_date).getTime();
-        const now = new Date().getTime();
-        if (now >= end) return 100;
-        if (now <= start) return 0;
-        const totalDuration = end - start;
-        const elapsed = now - start;
-        return Math.min(Math.round((elapsed / totalDuration) * 100), 95);
-      };
-
+      // --- Fetching Logic ---
       if (isAllProjectsView) {
         const teamsResponse = await teamAPI.getTeams();
         const userTeams = teamsResponse.data;
         setTeams(userTeams);
 
-        for (const team of userTeams) {
+        // Fetch projects for all teams in parallel
+        const teamPromises = userTeams.map(async (team: Team) => {
           try {
-            const projectsResponse = await projectAPI.getProjects(team.id);
-            const teamProjects = projectsResponse.data.map((project: Project) => ({
-              ...project,
-              progress: calculateProjectProgress(project),
-              daysRemaining: getDaysRemaining(project.end_date),
-              team_name: team.name,
-              team_id: team.id,
-              member_count: project.member_count || 0,
-              task_count: project.task_count || 0,
-              is_favorite: Math.random() > 0.7,
-              priority: calculatePriority(project),
-            }));
-            projectsData.push(...teamProjects);
-          } catch (error) {
-            console.error(`Failed to load projects for team ${team.id}:`, error);
+            // For "All Projects", we might want to limit per team or fetch all
+            // Ideally backend supports /projects/all/ endpoint, but here we loop teams
+            const res = await projectAPI.getProjects(team.id);
+            const rawProjects = Array.isArray(res.data) ? res.data : (res.data.results || []);
+            return rawProjects.map((p: Project) => transformProjectData(p, team));
+          } catch (err) {
+            console.error(`Error loading projects for team ${team.id}`, err);
+            return [];
           }
-        }
-      } else if (teamId) {
-        const projectsResponse = await projectAPI.getProjects(teamId);
-        projectsData = projectsResponse.data.map((project: Project) => ({
-          ...project,
-          progress: calculateProjectProgress(project),
-          daysRemaining: getDaysRemaining(project.end_date),
-          team_id: teamId,
-          member_count: project.member_count || 0,
-          task_count: project.task_count || 0,
-          is_favorite: Math.random() > 0.7,
-          priority: calculatePriority(project),
-        }));
+        });
 
-        try {
-          const teamResponse = await teamAPI.getTeam(teamId);
+        const results = await Promise.all(teamPromises);
+        newProjects = results.flat();
+        
+        // For 'All View' aggregated client-side, we disable server pagination for now
+        setHasMore(false); 
+
+      } else if (teamId) {
+        // Pagination Params
+        const params = {
+          page: currentPage,
+          page_size: 50, // Fetch 50 items
+        };
+
+        const [projectsResponse, teamResponse] = await Promise.all([
+          projectAPI.getProjects(teamId, params),
+          // Only fetch team info on first load/reset
+          reset ? teamAPI.getTeam(teamId) : Promise.resolve(null)
+        ]);
+
+        if (teamResponse) {
           setTeams([teamResponse.data]);
-        } catch (error) {
-          console.error('Failed to load team info:', error);
         }
+
+        // Handle response (support both paginated and list formats)
+        const rawData = projectsResponse.data.results || projectsResponse.data;
+        newProjects = rawData.map((p: Project) => transformProjectData(p));
+
+        // Update 'hasMore' based on if 'next' link exists
+        setHasMore(!!projectsResponse.data.next);
       }
       
-      setProjects(projectsData);
+      // --- State Updates ---
+      if (reset) {
+        setProjects(newProjects);
+      } else {
+        // Append unique projects only
+        setProjects(prev => {
+          const existingIds = new Set(prev.map(p => p.id));
+          const uniqueNew = newProjects.filter(p => !existingIds.has(p.id));
+          return [...prev, ...uniqueNew];
+        });
+      }
       
-      const stats = {
-        total: projectsData.length,
-        active: projectsData.filter(p => p.status === ProjectStatus.ACTIVE).length,
-        completed: projectsData.filter(p => p.status === ProjectStatus.COMPLETED).length,
-        planning: projectsData.filter(p => p.status === ProjectStatus.PLANNING).length,
-        onHold: projectsData.filter(p => p.status === ProjectStatus.ON_HOLD).length,
-        cancelled: projectsData.filter(p => p.status === ProjectStatus.CANCELLED).length,
-        archived: projectsData.filter(p => p.status === ProjectStatus.ARCHIVED).length,
-      };
-      setProjectStats(stats);
-      
+      // Prepare Stats
+      const allProjs = reset ? newProjects : [...projects, ...newProjects];
+      setProjectStats({
+        total: allProjs.length,
+        active: allProjs.filter(p => p.status === ProjectStatus.ACTIVE).length,
+        completed: allProjs.filter(p => p.status === ProjectStatus.COMPLETED).length,
+        planning: allProjs.filter(p => p.status === ProjectStatus.PLANNING).length,
+        onHold: allProjs.filter(p => p.status === ProjectStatus.ON_HOLD).length,
+        cancelled: allProjs.filter(p => p.status === ProjectStatus.CANCELLED).length,
+        archived: allProjs.filter(p => p.status === ProjectStatus.ARCHIVED).length,
+      });
+
+      // Increment page for next load
+      setPage(currentPage + 1);
+
     } catch (error) {
       console.error('Failed to load projects:', error);
       setSnackbar({ 
@@ -1101,31 +1172,98 @@ const ProjectList: React.FC = () => {
     }
   };
 
+// FIXED: Update local state directly instead of reloading everything
   const handleProjectUpdated = (updatedProject: any) => {
     setSnackbar({
       open: true,
       message: 'Project updated successfully!',
       severity: 'success'
     });
+    
+    // Close dialog first
     handleDialogClose();
-    loadProjects();
+
+    // Update the specific project in the list immediately
+    setProjects(prevProjects => prevProjects.map(p => {
+      if (p.id === updatedProject.id) {
+        // Merge the existing project data with the updates from the API
+        return {
+          ...p,
+          ...updatedProject,
+          // Re-calculate frontend specific fields
+          progress: calculateProjectProgress(updatedProject),
+          daysRemaining: getDaysRemaining(updatedProject.end_date),
+          priority: calculatePriority(updatedProject),
+          // Ensure these counts are taken from the fresh response
+          member_count: updatedProject.member_count, 
+          task_count: updatedProject.task_count
+        };
+      }
+      return p;
+    }));
+    
+    // DO NOT call loadProjects() here. That causes the double load.
   };
 
-  const handleCreateProject = (project: any) => {
+const handleCreateProject = (newProject: any) => {
     setSnackbar({
       open: true,
       message: 'Project created successfully!',
       severity: 'success'
     });
     handleDialogClose();
-    loadProjects();
+    
+    // enhance the new project with frontend fields
+    const enhancedProject: EnhancedProject = {
+      ...newProject,
+      progress: calculateProjectProgress(newProject),
+      daysRemaining: getDaysRemaining(newProject.end_date),
+      priority: calculatePriority(newProject),
+      team_name: teams.find(t => t.id === newProject.team)?.name, // Look up team name
+      member_count: newProject.member_count || 1, // Default to 1 (creator)
+      task_count: 0,
+      is_favorite: false
+    };
+
+    // Add to list immediately
+    setProjects(prev => [enhancedProject, ...prev]);
+    
+    // Update stats locally
+    setProjectStats(prev => ({
+      ...prev,
+      total: prev.total + 1,
+      planning: prev.planning + 1 // Assuming new projects start in planning
+    }));
   };
+
+// Inside ProjectList.tsx component
 
   const toggleFavorite = async (project: EnhancedProject, event: React.MouseEvent) => {
     event.stopPropagation();
+    
+    // 1. Optimistic Update (Update UI immediately for speed)
+    const previousProjects = [...projects];
     setProjects(prev => prev.map(p => 
       p.id === project.id ? { ...p, is_favorite: !p.is_favorite } : p
     ));
+
+    try {
+      // 2. Call API
+      if (!project.team_id) throw new Error("Team ID missing");
+      await projectAPI.toggleFavorite(project.team_id, project.id);
+      
+
+    } catch (error) {
+      console.error('Failed to toggle favorite:', error);
+      
+      // 3. Revert UI on error
+      setProjects(previousProjects);
+      setSnackbar({ 
+        open: true, 
+        message: 'Failed to update favorite status', 
+        severity: 'error' 
+      });
+    }
   };
 
   const getHeaderTitle = () => {
@@ -1161,7 +1299,7 @@ const ProjectList: React.FC = () => {
       <Tooltip title="Refresh">
         <span>
           <IconButton 
-            onClick={loadProjects}
+            onClick={() => loadProjects(true)}
             disabled={refreshing}
             sx={{ 
               backgroundColor: 'white',
@@ -1721,6 +1859,18 @@ const ProjectList: React.FC = () => {
               </Grid>
             ))}
           </Grid>
+        )}
+        {/* Inside render, at the bottom of the list */}
+        {hasMore && (
+          <Box sx={{ textAlign: 'center', mt: 4, mb: 2 }}>
+            <Button 
+              variant="outlined" 
+              onClick={() => loadProjects(false)}
+              disabled={loading}
+            >
+              {loading ? 'Loading...' : 'Load More Projects'}
+            </Button>
+          </Box>
         )}
 
         {/* Filter Drawer for Mobile */}

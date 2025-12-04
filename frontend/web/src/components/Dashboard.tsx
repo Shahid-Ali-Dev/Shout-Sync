@@ -13,17 +13,14 @@ import {
   Chip,
   IconButton,
   LinearProgress,
-  alpha,
   useTheme,
   useMediaQuery,
   Tooltip,
   Fab,
-  Badge,
   CircularProgress,
   Menu,
   MenuItem,
   ListItemIcon,
-  Divider,
   TextField,
   InputAdornment,
   Dialog,
@@ -43,18 +40,16 @@ import {
   Folder as ProjectIcon,
   Assignment as TaskIcon,
   Schedule as ScheduleIcon,
-  TrendingUp as TrendingIcon,
-  MoreVert as MoreIcon,
   Notifications as NotificationIcon,
   CheckCircle as CheckIcon,
   Pending as PendingIcon,
   PlayArrow as InProgressIcon,
-  CalendarToday as CalendarIcon,
   Person as PersonIcon,
   GroupAdd as GroupAddIcon,
   Dashboard as DashboardIcon,
   ViewKanban as KanbanIcon,
   FilterList as FilterIcon,
+  ViewList as ListIcon,
   Refresh as RefreshIcon,
   Search as SearchIcon,
   ExpandMore as ExpandMoreIcon,
@@ -358,6 +353,16 @@ const Dashboard: React.FC = () => {
   const [isSearchActive, setIsSearchActive] = useState(false);
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [isSearchExpanded, setIsSearchExpanded] = useState(false);
+
+  const [dashboardStats, setDashboardStats] = useState({
+    totalTeams: 0,
+    totalProjects: 0,
+    activeProjects: 0,
+    completedTasks: 0,
+    overdueTasks: 0,
+    teamMembers: 0,
+    tasksDueToday: 0,
+});
   
   // Dialog states
   const [joinTeamDialogOpen, setJoinTeamDialogOpen] = useState(false);
@@ -375,93 +380,37 @@ const Dashboard: React.FC = () => {
   });
 
   // Load all dashboard data
-  const loadDashboardData = async () => {
+const loadDashboardData = async () => {
     try {
+      
       setLoading(true);
       
-      // Load teams with member details
-      const teamsResponse = await teamAPI.getTeams();
-      const teamsData = teamsResponse.data;
+      // 1. Single API Call for everything
+      const response = await analyticsAPI.getDashboardStats();
+      setDashboardStats(response.data.stats); // Direct mapping
+      const data = response.data;
+
+      // 2. Set Stats
+      // Map backend response to your frontend stats structure
+      // (Ensure your backend returns exactly these keys or map them here)
+      const backendStats = data.stats;
       
-      // Enhance teams with project counts and member details
-      const enhancedTeams = await Promise.all(
-        teamsData.map(async (team: Team) => {
-          try {
-            const projectsResponse = await projectAPI.getProjects(team.id);
-            const membersResponse = await teamAPI.getTeamMembers(team.id);
-            
-            return {
-              ...team,
-              project_count: projectsResponse.data.length,
-              members: membersResponse.data.slice(0, 5)
-            };
-          } catch (error) {
-            console.error(`Failed to load details for team ${team.id}:`, error);
-            return { ...team, project_count: 0, members: [] };
-          }
-        })
-      );
+      // 3. Set Lists
+      setTeams(data.all_teams); // Lightweight teams list for search
+      setProjects(data.recent_projects); // Only top 5 recent projects
+      setDueTasks(data.due_tasks);
+      setRecentTasks(data.recent_tasks);
       
-      setTeams(enhancedTeams);
+      // 4. Set Tasks for search (Optional: If you want full search, you might need a separate call
+      // or accept that dashboard search only searches recent items now for speed)
+      setAllTasks([...data.due_tasks, ...data.recent_tasks]); 
+
+      // 5. Calculate derived stats if backend didn't provide them all
+      // But ideally backend provides everything.
       
-      // Load all projects across teams with member details
-      const allProjects: Project[] = [];
-      const allTasksList: Task[] = [];
-      
-      for (const team of enhancedTeams) {
-        try {
-          const projectsResponse = await projectAPI.getProjects(team.id);
-          const teamProjects = projectsResponse.data.map((project: any) => ({
-            ...project,
-            team_name: team.name,
-            team_id: team.id,
-            team_members: team.members?.slice(0, 3) || []
-          }));
-          allProjects.push(...teamProjects);
-          
-          // Load tasks for each project
-          for (const project of teamProjects) {
-            try {
-              const tasksResponse = await projectAPI.getTasks(team.id, project.id);
-              const projectTasks = tasksResponse.data.map((task: any) => ({
-                ...task,
-                project_name: project.name,
-                project_id: project.id,
-                team_id: team.id
-              }));
-              allTasksList.push(...projectTasks);
-            } catch (error) {
-              console.error(`Failed to load tasks for project ${project.id}:`, error);
-            }
-          }
-        } catch (error) {
-          console.error(`Failed to load projects for team ${team.id}:`, error);
-        }
-      }
-      
-      setProjects(allProjects);
-      setAllTasks(allTasksList);
-      
-      // Filter for display
-      setProjects(allProjects.slice(0, isMobile ? 2 : 4));
-      
-      // Filter user's tasks
-      const userTasks = allTasksList.filter(task => task.assignee?.id === user?.id);
-      const recentUserTasks = userTasks.slice(0, 5);
-      
-      // Filter due tasks
-      const now = new Date();
-      const tomorrow = new Date(now);
-      tomorrow.setDate(tomorrow.getDate() + 1);
-      
-      const dueSoonTasks = allTasksList.filter(task => {
-        if (!task.due_date) return false;
-        const dueDate = new Date(task.due_date);
-        return dueDate <= tomorrow && task.status !== 4;
-      });
-      
-      setDueTasks(dueSoonTasks.slice(0, 3));
-      setRecentTasks(recentUserTasks);
+      // Note: We are NOT setting 'projects' to ALL projects anymore, 
+      // just the recent ones. This makes it fast.
+      // If you need "Total Projects" number for the card, use the stat from backend:
       
     } catch (error) {
       console.error('Failed to load dashboard data:', error);
@@ -757,14 +706,18 @@ const Dashboard: React.FC = () => {
   };
 
   const getDisplayProjects = () => {
-    if (isSearchActive && searchCategory !== 'teams') {
-      return searchResults
-        .filter(result => result.type === 'project')
-        .map(result => result.data as Project)
-        .slice(0, isMobile ? 2 : 4);
-    }
-    return projects;
-  };
+      // 1. If Searching: Show top results based on mobile/desktop limit
+      if (isSearchActive && searchCategory !== 'teams') {
+        return searchResults
+          .filter(result => result.type === 'project')
+          .map(result => result.data as Project)
+          .slice(0, isMobile ? 2 : 4);
+      }
+
+      // 2. If Dashboard View: Show only the top 4 recent ones
+      // This fixes your issue. We slice ONLY for display, keeping the full list in state.
+      return projects.slice(0, isMobile ? 2 : 4);
+    };
 
   const getDisplayTasks = () => {
     if (isSearchActive && searchCategory !== 'teams') {
@@ -794,22 +747,6 @@ const Dashboard: React.FC = () => {
       }).slice(0, 3);
     }
     return dueTasks;
-  };
-
-  // Stats calculation
-  const stats = {
-    totalTeams: teams.length,
-    totalProjects: projects.length,
-    activeProjects: projects.filter(p => p.status === 2).length,
-    completedTasks: allTasks.filter(task => task.status === 4).length,
-    overdueTasks: allTasks.filter(task => {
-      if (!task.due_date) return false;
-      const dueDate = new Date(task.due_date);
-      const today = new Date();
-      return dueDate < today && task.status !== 4;
-    }).length,
-    teamMembers: getUniqueMemberCount(teams),
-    tasksDueToday: dueTasks.length,
   };
 
   // Helper functions
@@ -1056,7 +993,7 @@ const Dashboard: React.FC = () => {
                       fontSize: isMobile ? '1.25rem' : '1.5rem'
                     }}
                   >
-                    {stats.totalTeams}
+                    {dashboardStats.totalTeams}
                   </Typography>
                   <Typography 
                     variant="subtitle2" 
@@ -1119,7 +1056,7 @@ const Dashboard: React.FC = () => {
                       fontSize: isMobile ? '1.25rem' : '1.5rem'
                     }}
                   >
-                    {stats.totalProjects}
+                    {dashboardStats.totalProjects}
                   </Typography>
                   <Typography 
                     variant="subtitle2" 
@@ -1182,7 +1119,7 @@ const Dashboard: React.FC = () => {
                       fontSize: isMobile ? '1.25rem' : '1.5rem'
                     }}
                   >
-                    {stats.completedTasks}
+                    {dashboardStats.completedTasks}
                   </Typography>
                   <Typography 
                     variant="subtitle2" 
@@ -1245,7 +1182,7 @@ const Dashboard: React.FC = () => {
                       fontSize: isMobile ? '1.25rem' : '1.5rem'
                     }}
                   >
-                    {stats.tasksDueToday}
+                    {dashboardStats.tasksDueToday}
                   </Typography>
                   <Typography 
                     variant="subtitle2" 
@@ -1308,7 +1245,8 @@ const Dashboard: React.FC = () => {
                               Your Teams
                             </Typography>
                             <Typography variant="body2" color="text.secondary">
-                              {teams.length} team{teams.length !== 1 ? 's' : ''} • {getUniqueMemberCount(teams)} member{getUniqueMemberCount(teams) !== 1 ? 's' : ''}
+                              {/* NEW FIXED LOGIC: Uses the pre-calculated stat from backend */}
+                              {teams.length} team{teams.length !== 1 ? 's' : ''} • {dashboardStats.teamMembers} member{dashboardStats.teamMembers !== 1 ? 's' : ''}
                             </Typography>
                           </Box>
                           
@@ -1384,8 +1322,8 @@ const Dashboard: React.FC = () => {
                                   onClick={() => navigate(`/team/${team.id}`)}
                                   >
                                     <CardContent sx={{ p: 2.5, position: 'relative' }}>
-                                      <Chip 
-                                        label={`${team.project_count || 0} projects`}
+                                    <Chip 
+                                      label={`${team.project_count || 0} projects`}
                                         size="small"
                                         color="primary"
                                         variant="outlined"
@@ -1396,19 +1334,35 @@ const Dashboard: React.FC = () => {
                                         {team.name}
                                       </Typography>
 
-                                      {team.description && (
-                                        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                                          {team.description}
+                                        {/* FIXED CODE (Consistent Height) */}
+                                        <Typography 
+                                          variant="body2" 
+                                          color="text.secondary" 
+                                          sx={{ 
+                                            mb: 2,
+                                            minHeight: '40px', 
+                                            // 2. Handle text overflow cleanly
+                                            display: '-webkit-box',
+                                            WebkitLineClamp: 2,
+                                            WebkitBoxOrient: 'vertical',
+                                            overflow: 'hidden',
+                                            // 3. Style empty state differently (optional)
+                                            fontStyle: team.description ? 'normal' : 'normal',
+                                            opacity: team.description ? 1 : 0.5
+                                          }}
+                                        >
+                                          {team.description || 'No description provided'}
                                         </Typography>
-                                      )}
+                                        
 
                                       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                         <Typography variant="caption" color="text.secondary">
                                           {team.member_count} members
                                         </Typography>
-                                        <Typography variant="caption" color="text.secondary">
-                                          By {team.created_by_name}
-                                        </Typography>
+                                          <Typography variant="caption" color="text.secondary">
+                                            {/* Backend sends 'created_by_name', ensure you use that */}
+                                            By {team.created_by_name}
+                                          </Typography>
                                       </Box>
                                     </CardContent>
                                   </Card>
@@ -1581,19 +1535,36 @@ const Dashboard: React.FC = () => {
                               {isSearchActive ? 'Search results' : 'Across all teams'}
                             </Typography>
                           </Box>
+
+                          {/* UPDATED ACTION BUTTONS SECTION */}
                           {!isSearchActive && (
-                            <Button
-                              variant="contained"
-                              startIcon={<AddIcon />}
-                              onClick={() => setCreateProjectDialogOpen(true)}
-                              sx={{
-                                borderRadius: 2,
-                                textTransform: 'none',
-                                fontWeight: '600'
-                              }}
-                            >
-                              New Project
-                            </Button>
+                            <Box sx={{ display: 'flex', gap: 1 }}>
+                              <Button
+                                variant="outlined"
+                                startIcon={<ListIcon />}
+                                onClick={() => navigate('/projects')}
+                                sx={{
+                                  borderRadius: 2,
+                                  textTransform: 'none',
+                                  fontWeight: '600',
+                                  px: 2
+                                }}
+                              >
+                                View All
+                              </Button>
+                              <Button
+                                variant="contained"
+                                startIcon={<AddIcon />}
+                                onClick={() => setCreateProjectDialogOpen(true)}
+                                sx={{
+                                  borderRadius: 2,
+                                  textTransform: 'none',
+                                  fontWeight: '600'
+                                }}
+                              >
+                                New Project
+                              </Button>
+                            </Box>
                           )}
                         </Box>
                       </Box>

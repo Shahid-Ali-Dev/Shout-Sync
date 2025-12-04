@@ -163,9 +163,13 @@ class ProjectSerializer(serializers.ModelSerializer):
     members = ProjectMemberSerializer(source='memberships', many=True, read_only=True)
     assignees = ProjectAssigneeSerializer(source='assignee_relations', many=True, read_only=True)  
     permissions = ProjectPermissionSerializer(many=True, read_only=True)  
+    
+    # SerializerMethodField allows us to switch between Optimized Data and Fallback Data
     member_count = serializers.SerializerMethodField()
-    assignee_count = serializers.SerializerMethodField()
     task_count = serializers.SerializerMethodField()
+    is_favorite = serializers.SerializerMethodField()
+    assignee_count = serializers.SerializerMethodField()
+    
     created_by_name = serializers.SerializerMethodField()
     team_name = serializers.CharField(source='team.name', read_only=True)
     
@@ -174,25 +178,50 @@ class ProjectSerializer(serializers.ModelSerializer):
         fields = (
             'id', 'team', 'team_name', 'name', 'description', 'start_date', 'end_date',
             'status', 'created_by', 'created_by_name', 'members', 'assignees', 'permissions',  
-            'member_count', 'assignee_count', 'task_count', 'created_at', 'updated_at'
+            'member_count', 'assignee_count', 'task_count', 'created_at', 'updated_at','is_favorite'
         )
         read_only_fields = ('created_by', 'created_by_name', 'members', 'assignees', 
                            'member_count', 'assignee_count', 'task_count', 'permissions')
         
-    def get_assignee_count(self, obj):  # ADD THIS METHOD
-        return obj.assignee_relations.count()
+    def get_assignee_count(self, obj):
+        # OPTIMIZATION CHECK
+        if hasattr(obj, 'active_assignee_count'):
+             return obj.active_assignee_count
+        
+        # FALLBACK (Standard Django ORM)
+        # Check if the relation exists to avoid errors on partial objects
+        if hasattr(obj, 'assignee_relations'):
+            return obj.assignee_relations.count()
+        return 0
     
     def get_member_count(self, obj):
-        return obj.memberships.count()
-    
-    def get_assignee_count(self, obj):
-        try:
-            return obj.memberships.exclude(role=1).count()
-        except:
+        # OPTIMIZATION CHECK
+        if hasattr(obj, 'active_member_count'):
+            return obj.active_member_count
+        # FALLBACK
+        if hasattr(obj, 'memberships'):
             return obj.memberships.count()
-    
+        return 0
+
     def get_task_count(self, obj):
-        return obj.tasks.count()
+        # OPTIMIZATION CHECK
+        if hasattr(obj, 'active_task_count'):
+            return obj.active_task_count
+        # FALLBACK
+        if hasattr(obj, 'tasks'):
+            return obj.tasks.count()
+        return 0
+    
+    def get_is_favorite(self, obj):
+        # OPTIMIZATION CHECK
+        if hasattr(obj, 'is_user_favorite'):
+            return obj.is_user_favorite
+        
+        # FALLBACK
+        user = self.context.get('request').user if self.context.get('request') else None
+        if user and not user.is_anonymous:
+            return obj.favorited_by.filter(id=user.id).exists()
+        return False
     
     def get_created_by_name(self, obj):
         if obj.created_by:

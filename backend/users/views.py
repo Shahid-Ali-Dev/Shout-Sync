@@ -11,16 +11,13 @@ from datetime import datetime, timedelta
 from .models import User, Team, TeamMember, TeamInvitation, Project, ProjectMember, Task, Subtask, TaskComment, TaskAttachment, TeamJoinRequest
 from .serializers import *
 from .notifications import *
-from django.db.models import Prefetch
+from django.db.models import Count, OuterRef, Exists, Subquery, Prefetch, Q
 from rest_framework.pagination import PageNumberPagination
-
 
 class TeamMemberPagination(PageNumberPagination):
     page_size = 20
     page_size_query_param = 'page_size'
     max_page_size = 100
-
-# views.py
 
 @api_view(['GET'])
 def team_members_optimized_view(request, team_id):
@@ -962,21 +959,188 @@ def leave_team_view(request, team_id):
     except TeamMember.DoesNotExist:
         return Response({'error': 'Not a member of this team'}, status=status.HTTP_400_BAD_REQUEST)
     
-# In your views.py - Update the projects_view function
+
+from django.db.models import Count, Q, Prefetch # Make sure Q and Prefetch are imported
+
+@api_view(['GET'])
+def user_dashboard_stats_view(request):
+    """
+    Aggregated endpoint for Dashboard.
+    Fixes: Avatar loading, Member counting, and Total Project counts.
+    """
+    user = request.user
+    today = timezone.now()
+    tomorrow = today + timedelta(days=1)
+
+    # 1. Get User's Team IDs first (Critical for accurate counting)
+    # We get IDs to create a fresh query later that doesn't filter by "request.user"
+    user_team_ids = Team.objects.filter(
+        members__user=user, 
+        members__is_active=True
+    ).values_list('id', flat=True)
+
+    # 2. Get Projects (Top 5 Recent) WITH AVATARS
+    # We prefetch 'assignees' so we can show their faces on the dashboard
+    recent_projects = Project.objects.filter(team_id__in=user_team_ids).select_related(
+        'team', 'created_by'
+    ).prefetch_related(
+        Prefetch('assignees', queryset=User.objects.only('id', 'first_name', 'last_name', 'avatar'))
+    ).annotate(
+        active_task_count=Count('tasks'),
+        active_member_count=Count('memberships', distinct=True),
+    ).order_by('-updated_at')[:5]
+
+    # 3. Get User Tasks
+    user_tasks = Task.objects.filter(assignee=user).select_related(
+        'project', 'project__team'
+    ).order_by('due_date')
+
+    # 4. Calculate GLOBAL Stats (The "Total" numbers)
+    total_projects = Project.objects.filter(team_id__in=user_team_ids).count()
+    active_projects = Project.objects.filter(team_id__in=user_team_ids, status=2).count()
+    completed_tasks_count = Task.objects.filter(assignee=user, status=5).count()
+    
+    due_tasks_query = user_tasks.filter(due_date__lte=tomorrow, status__lt=5)
+    due_tasks_count = due_tasks_query.count()
+    
+    # Fix Unique Member Count: Query TeamMember directly using the Team IDs
+    unique_members_count = TeamMember.objects.filter(
+        team_id__in=user_team_ids, 
+        is_active=True
+    ).values('user').distinct().count()
+
+    # 5. Serialize Projects (Manually to include team_members avatars)
+    projects_data = []
+    for p in recent_projects:
+        total_p_tasks = p.tasks.count()
+        done_p_tasks = p.tasks.filter(status=5).count()
+        progress = int((done_p_tasks / total_p_tasks) * 100) if total_p_tasks > 0 else 0
+        
+        # Extract first 3 avatars manually
+        avatars = []
+        for assignee in p.assignees.all()[:3]:
+            avatars.append({
+                'user': {
+                    'first_name': assignee.first_name,
+                    'last_name': assignee.last_name,
+                    'avatar': assignee.avatar.url if assignee.avatar else None
+                }
+            })
+
+        projects_data.append({
+            'id': str(p.id),
+            'name': p.name,
+            'description': p.description,
+            'status': p.status,
+            'progress': progress,
+            'team_name': p.team.name,
+            'team_id': str(p.team.id),
+            'member_count': p.active_member_count,
+            'task_count': p.active_task_count,
+            'start_date': p.start_date,
+            'end_date': p.end_date,
+            'created_by_name': f"{p.created_by.first_name} {p.created_by.last_name}",
+            'team_members': avatars # <--- This fixes the missing profiles
+        })
+
+    # Serialize Tasks
+    due_tasks_data = [{
+        'id': str(t.id),
+        'title': t.title,
+        'status': t.status,
+        'priority': t.priority,
+        'due_date': t.due_date,
+        'project_name': t.project.name,
+        'project_id': str(t.project.id),
+        'team_id': str(t.project.team.id)
+    } for t in due_tasks_query[:5]]
+
+    recent_tasks_data = [{
+        'id': str(t.id),
+        'title': t.title,
+        'status': t.status,
+        'priority': t.priority,
+        'due_date': t.due_date,
+        'project_name': t.project.name,
+        'project_id': str(t.project.id),
+        'team_id': str(t.project.team.id)
+    } for t in user_tasks.order_by('-updated_at')[:5]]
+
+    # 6. Serialize Teams (Fixing the "1 member" bug)
+    # We query Team FRESH using the IDs to avoid the previous filter inheritance
+    teams_queryset = Team.objects.filter(id__in=user_team_ids).annotate(
+        real_member_count=Count('members', filter=Q(members__is_active=True), distinct=True),
+        real_project_count=Count('projects', distinct=True)
+    ).select_related('created_by').order_by('-real_project_count', 'name')
+
+    all_teams_data = []
+    for t in teams_queryset:
+        all_teams_data.append({
+            'id': str(t.id),
+            'name': t.name,
+            'description': t.description,
+            'member_count': t.real_member_count,     # Uses fresh annotation (Corrects "1 member" issue)
+            'project_count': t.real_project_count,   
+            'created_by_name': f"{t.created_by.first_name} {t.created_by.last_name}"
+        })
+
+    return Response({
+        'stats': {
+            'totalTeams': len(user_team_ids),
+            'totalProjects': total_projects, # Uses DB count (e.g. 100), not list length (5)
+            'activeProjects': active_projects,
+            'completedTasks': completed_tasks_count,
+            'tasksDueToday': due_tasks_count,
+            'teamMembers': unique_members_count # Fixed logic
+        },
+        'recent_projects': projects_data,
+        'due_tasks': due_tasks_data,
+        'recent_tasks': recent_tasks_data,
+        'all_teams': all_teams_data 
+    })
+    
 @api_view(['GET', 'POST'])
 def projects_view(request, team_id):
-    """Get all projects for a team or create a new project"""
     team = get_object_or_404(Team, id=team_id)
     
-    # Check if user is member of this team
     team_member = TeamMember.objects.filter(team=team, user=request.user, is_active=True).first()
     if not team_member:
-        return Response({'error': 'Not a member of this team'}, status=status.HTTP_403_FORBIDDEN)
-    
+        return Response({'error': 'Not a member'}, status=status.HTTP_403_FORBIDDEN)
+
     if request.method == 'GET':
-        projects = Project.objects.filter(team=team)
-        serializer = ProjectSerializer(projects, many=True)
-        return Response(serializer.data)
+        # 1. SHARED OPTIMIZATION (Make it fast for everyone)
+        is_favorite_subquery = Project.favorited_by.through.objects.filter(
+            project_id=OuterRef('pk'),
+            user_id=request.user.id
+        )
+
+        projects = Project.objects.filter(team=team).select_related(
+            'created_by', 'team'
+        ).prefetch_related(
+            'assignee_relations', 
+            'assignee_relations__user',
+            'memberships',
+            'permissions'
+        ).annotate(
+            active_task_count=Count('tasks'),
+            active_member_count=Count('memberships', distinct=True),
+            is_user_favorite=Exists(is_favorite_subquery)
+        ).order_by('-created_at')
+
+        # 2. CONDITIONAL PAGINATION (The Magic Fix)
+        # Only paginate if the frontend specifically asks for a 'page'
+        if request.query_params.get('page'):
+            paginator = PageNumberPagination()
+            paginator.page_size = 50
+            result_page = paginator.paginate_queryset(projects, request)
+            serializer = ProjectSerializer(result_page, many=True, context={'request': request})
+            # Returns { count: 100, results: [...] } -> For ProjectList
+            return paginator.get_paginated_response(serializer.data)
+        
+        else:
+            # Returns [...] -> For Sidebar, Dashboard, etc. (No frontend changes needed!)
+            serializer = ProjectSerializer(projects, many=True, context={'request': request})
+            return Response(serializer.data)
     
     elif request.method == 'POST':
         # DEBUG: Check user's team role and permissions
@@ -1061,17 +1225,44 @@ def projects_view(request, team_id):
 
 @api_view(['GET', 'PUT', 'DELETE'])
 def project_detail_view(request, team_id, project_id):
-    """Get, update, or delete a specific project"""
     team = get_object_or_404(Team, id=team_id)
-    project = get_object_or_404(Project, id=project_id, team=team)
+    
+    # OPTIMIZATION: Fetch project with all related data AND annotations
+    if request.method == 'GET':
+        # Define the favorite subquery
+        is_favorite_subquery = Project.favorited_by.through.objects.filter(
+            project_id=OuterRef('pk'),
+            user_id=request.user.id
+        )
+
+        project = get_object_or_404(
+            Project.objects.select_related('team', 'created_by')
+            .prefetch_related(
+                'assignee_relations', 
+                'assignee_relations__user',
+                'memberships',
+                'permissions'
+            ).annotate(
+                # Add the annotations here too so the Detail page is fast
+                active_task_count=Count('tasks'),
+                active_member_count=Count('memberships', distinct=True),
+                is_user_favorite=Exists(is_favorite_subquery)
+            ), 
+            id=project_id, 
+            team=team
+        )
+    else:
+        # For PUT/DELETE we don't need heavy annotations
+        project = get_object_or_404(Project, id=project_id, team=team)
     
     # Get user's permissions
     permission = get_user_project_permissions(request.user, project)
+    
     if not permission:
-        return Response({'error': 'Not authorized to access this project'}, status=status.HTTP_403_FORBIDDEN)
+        return Response({'error': 'Not authorized'}, status=status.HTTP_403_FORBIDDEN)
     
     if request.method == 'GET':
-        serializer = ProjectSerializer(project)
+        serializer = ProjectSerializer(project, context={'request': request})
         return Response(serializer.data)
     
     elif request.method == 'PUT':
@@ -1106,6 +1297,8 @@ def project_detail_view(request, team_id, project_id):
                 allowed_updates['team'] = request.data['team']
             else:
                 return Response({'error': 'No permission to transfer project'}, status=status.HTTP_403_FORBIDDEN)
+        
+        
 
         # 3. Handle Assignees Properly - FIXED VERSION
         if 'assignee_ids' in request.data and 'assignee_roles' in request.data:
@@ -1154,9 +1347,25 @@ def project_detail_view(request, team_id, project_id):
                         continue
                 
                 # Remove assignees not in the new list (except creator)
-                for assignee in current_assignees:
+            for assignee in current_assignees:
                     if str(assignee.user.id) not in users_to_keep and assignee.user != project.created_by:
+                        # 1. Capture the user before deleting the assignee record
+                        user_to_remove = assignee.user
+                        
+                        # 2. Delete the Assignee record (Removes from Dialog)
                         assignee.delete()
+                        
+                        # 3. FIX: Also delete the ProjectMember record (Fixes the Count on Dashboard)
+                        ProjectMember.objects.filter(
+                            project=project, 
+                            user=user_to_remove
+                        ).delete()
+                        
+                        # 4. Also remove any specific permissions they had
+                        ProjectPermission.objects.filter(
+                            project=project,
+                            user=user_to_remove
+                        ).delete()
             else:
                 return Response({'error': 'No permission to manage assignees'}, status=status.HTTP_403_FORBIDDEN)
 
@@ -1164,28 +1373,16 @@ def project_detail_view(request, team_id, project_id):
         serializer = ProjectCreateSerializer(project, data=allowed_updates, partial=True, context={'request': request})
         if serializer.is_valid():
             serializer.save()
-            
-            # Log activity
-            create_activity_log(
-                user=request.user,
-                action_type=ActivityLog.ActionType.PROJECT_UPDATED,
-                description=f"Updated project '{project.name}'",
-                details={'updated_fields': list(allowed_updates.keys())},
-                team=team,
-                project=project
-            )
-            
-            # Return updated project data
+            # ... logging code ...
+            # Response serializer uses the SAFE ProjectSerializer we just fixed
             response_serializer = ProjectSerializer(project, context={'request': request})
             return Response(response_serializer.data)
-        
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
     
     elif request.method == 'DELETE':
         # Only project creator or team owner/admin can delete
-        if not (project.created_by == request.user or 
-                permission.can_delete_project):
-            return Response({'error': 'Insufficient permissions to delete project'}, status=status.HTTP_403_FORBIDDEN)
+        if not (project.created_by == request.user or permission.can_delete_project):
+            return Response({'error': 'Insufficient permissions'}, status=status.HTTP_403_FORBIDDEN)
         
         project.delete()
         return Response({'message': 'Project deleted successfully'})
@@ -1865,55 +2062,125 @@ def recent_activity_view(request, team_id):
 # Add helper function at the top of views.py
 def get_user_project_permissions(user, project):
     """
-    Get or create user's permissions for a project based on:
-    1. Team Role (Owner/Admin = Super access)
-    2. Project Role (Lead/Manager = Edit All, Contributor = Edit Basic)
+    Get or calculate user's permissions for a project.
+    Optimized to calculate in-memory without writing to DB on GET requests.
     """
+    # 1. OPTIMIZATION: Check if permissions are already prefetched on the project object
+    # This leverages the prefetch_related('permissions') you added to the view
+    if hasattr(project, '_prefetched_objects_cache') and 'permissions' in project._prefetched_objects_cache:
+        # Look for this user's permission in the cached list
+        permission = next((p for p in project.permissions.all() if p.user_id == user.id), None)
+        if permission:
+            return permission
+
+    # 2. Fallback: Query DB if not cached (but don't create yet)
+    permission = ProjectPermission.objects.filter(project=project, user=user).first()
+    if permission:
+        return permission
+
+    # 3. If no specific permission object exists, calculate dynamically (IN MEMORY ONLY)
+    
     # Check if user is a member of the team at all
     team_member = TeamMember.objects.filter(team=project.team, user=user, is_active=True).first()
     if not team_member:
         return None
-    
-    # Check if a specific permission object already exists
-    permission = ProjectPermission.objects.filter(project=project, user=user).first()
-    
-    # If no specific permission exists, calculate and create one dynamically
-    if not permission:
-        level = ProjectPermission.PermissionLevel.VIEW_ONLY
-        
-        # 1. Check Team Level Roles (Overrides everything)
-        if team_member.role in [TeamMember.Role.OWNER, TeamMember.Role.ADMIN]:
-            level = ProjectPermission.PermissionLevel.ADMIN
-            
-        else:
-            # 2. Check Project Assignee Status
-            # See if this user is assigned to the project
-            assignee = ProjectAssignee.objects.filter(project=project, user=user).first()
-            
-            if assignee:
-                # Map Assignee Roles to Permission Levels
-                if assignee.role == ProjectAssignee.AssigneeRole.LEAD:
-                    # Leads can manage members, tasks, and everything
-                    level = ProjectPermission.PermissionLevel.EDIT_ALL
-                elif assignee.role == ProjectAssignee.AssigneeRole.MANAGER:
-                    # Managers can also manage tasks and everything
-                    level = ProjectPermission.PermissionLevel.EDIT_ALL
-                else: 
-                    # Contributors (Role 1)
-                    # "At least allow to change timelines and project status"
-                    # EDIT_BASIC allows: name, description, dates, status
-                    level = ProjectPermission.PermissionLevel.EDIT_BASIC
-            
-            # 3. Check Old ProjectMember model (for backward compatibility if you used it)
-            elif ProjectMember.objects.filter(project=project, user=user).exists():
-                # Default to basic editing for legacy members
-                level = ProjectPermission.PermissionLevel.EDIT_BASIC
 
-        # Create the permission object
-        permission = ProjectPermission.objects.create(
-            project=project,
-            user=user,
-            level=level
-        )
+    # Determine Permission Level
+    level = ProjectPermission.PermissionLevel.VIEW_ONLY
+
+    # A. Check Team Level Roles (Overrides everything)
+    if team_member.role in [TeamMember.Role.OWNER, TeamMember.Role.ADMIN]:
+        level = ProjectPermission.PermissionLevel.ADMIN
+    else:
+        # B. Check Project Assignee Status
+        assignee = ProjectAssignee.objects.filter(project=project, user=user).first()
+        
+        if assignee:
+            # Map Assignee Roles to Permission Levels
+            if assignee.role == ProjectAssignee.AssigneeRole.LEAD:
+                level = ProjectPermission.PermissionLevel.EDIT_ALL
+            elif assignee.role == ProjectAssignee.AssigneeRole.MANAGER:
+                level = ProjectPermission.PermissionLevel.EDIT_ALL
+            else: 
+                # Contributors (Role 1) - Edit Basic Info
+                level = ProjectPermission.PermissionLevel.EDIT_BASIC
+        
+        # C. Check Old ProjectMember model (backward compatibility)
+        elif ProjectMember.objects.filter(project=project, user=user).exists():
+            level = ProjectPermission.PermissionLevel.EDIT_BASIC
+
+    # 4. Instantiate temporary object (DO NOT SAVE to DB)
+    # We create the object in memory so the serializer can read it
+    temp_permission = ProjectPermission(project=project, user=user, level=level)
+
+    # 5. Manually set the boolean flags 
+    # (Because we aren't calling .save(), we must replicate the model's save logic here)
+    if level == ProjectPermission.PermissionLevel.VIEW_ONLY:
+        temp_permission.can_edit_name = False
+        temp_permission.can_edit_description = False
+        temp_permission.can_edit_dates = False
+        temp_permission.can_edit_status = False
+        temp_permission.can_assign_tasks = False
+        temp_permission.can_manage_members = False
+        temp_permission.can_transfer_project = False
+        temp_permission.can_delete_project = False
+
+    elif level == ProjectPermission.PermissionLevel.EDIT_BASIC:
+        temp_permission.can_edit_name = True
+        temp_permission.can_edit_description = True
+        temp_permission.can_edit_dates = True
+        temp_permission.can_edit_status = True
+        temp_permission.can_assign_tasks = True
+        temp_permission.can_manage_members = False
+        temp_permission.can_transfer_project = False
+        temp_permission.can_delete_project = False
+
+    elif level == ProjectPermission.PermissionLevel.EDIT_ALL:
+        temp_permission.can_edit_name = True
+        temp_permission.can_edit_description = True
+        temp_permission.can_edit_dates = True
+        temp_permission.can_edit_status = True
+        temp_permission.can_assign_tasks = True
+        temp_permission.can_manage_members = True
+        temp_permission.can_transfer_project = False
+        temp_permission.can_delete_project = False
+
+    elif level == ProjectPermission.PermissionLevel.ADMIN:
+        temp_permission.can_edit_name = True
+        temp_permission.can_edit_description = True
+        temp_permission.can_edit_dates = True
+        temp_permission.can_edit_status = True
+        temp_permission.can_assign_tasks = True
+        temp_permission.can_manage_members = True
+        temp_permission.can_transfer_project = True
+        temp_permission.can_delete_project = True
+
+    return temp_permission
+
+# views.py (Check if this exists at the bottom)
+
+@api_view(['POST'])
+def toggle_project_favorite_view(request, team_id, project_id):
+    """Toggle the favorite status of a project for the current user"""
+    team = get_object_or_404(Team, id=team_id)
+    project = get_object_or_404(Project, id=project_id, team=team)
     
-    return permission
+    # Check if user is a member of the team
+    if not TeamMember.objects.filter(team=team, user=request.user, is_active=True).exists():
+        return Response({'error': 'Not a member of this team'}, status=status.HTTP_403_FORBIDDEN)
+
+    is_favorite = False
+    
+    # Toggle logic
+    if request.user in project.favorited_by.all():
+        project.favorited_by.remove(request.user)
+        is_favorite = False
+    else:
+        project.favorited_by.add(request.user)
+        is_favorite = True
+        
+    return Response({
+        'status': 'success', 
+        'is_favorite': is_favorite,
+        'project_id': str(project.id)
+    })

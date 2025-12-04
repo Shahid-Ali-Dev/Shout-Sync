@@ -179,6 +179,18 @@ const AppRoutes: React.FC = () => {
         }
       />
       <Route
+        path="/projects"
+        element={
+          isAuthenticated ? (
+            <MainLayout>
+              <ProjectList />
+            </MainLayout>
+          ) : (
+            <Navigate to="/login" replace />
+          )
+        }
+      />
+      <Route
         path="/team/:teamId/projects"
         element={
           isAuthenticated ? (

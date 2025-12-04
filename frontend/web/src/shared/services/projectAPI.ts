@@ -144,9 +144,11 @@ export const projectAPI = {
   getTaskActivity: (teamId: string, projectId: string, taskId: string) =>
     api.get(`/auth/teams/${teamId}/projects/${projectId}/tasks/${taskId}/activity/`),
 
-  // In projectAPI.ts, add this method if needed:
-getRecentActivity: (teamId: string, limit?: number) =>
-  api.get(`/auth/teams/${teamId}/activity/recent/?limit=${limit || 10}`),
+  getRecentActivity: (teamId: string, limit?: number) =>
+    api.get(`/auth/teams/${teamId}/activity/recent/?limit=${limit || 10}`),
+
+  toggleFavorite: (teamId: string, projectId: string) => 
+      api.post(`/auth/teams/${teamId}/projects/${projectId}/favorite/`),
 
   // ==================== SEARCH & FILTERS (OPTIMIZED) ====================
   searchProjects: (teamId: string, query: string, params?: {

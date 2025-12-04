@@ -222,6 +222,11 @@ class Project(models.Model):
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    favorited_by = models.ManyToManyField(
+        'User', 
+        related_name='favorite_projects', 
+        blank=True
+    )
 
     class Meta:
         ordering = ['-created_at']
