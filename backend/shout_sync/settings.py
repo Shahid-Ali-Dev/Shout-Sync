@@ -11,7 +11,12 @@ SECRET_KEY = os.environ.get('SECRET_KEY', 'django-insecure-your-secret-key-here'
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ['localhost', '127.0.0.1', '0.0.0.0']
+ALLOWED_HOSTS = [
+    'localhost', 
+    '127.0.0.1', 
+    '0.0.0.0',
+    'shout-sync.onrender.com',  # Add this line
+]
 
 # Application definition
 INSTALLED_APPS = [
@@ -82,6 +87,10 @@ AUTH_PASSWORD_VALIDATORS = [
         'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator',
     },
 ]
+AUTHENTICATION_BACKENDS = [
+    'users.backends.EmailOrUsernameModelBackend',  # Custom backend first
+    'django.contrib.auth.backends.ModelBackend',   # Default backend as fallback
+]
 
 # Internationalization
 LANGUAGE_CODE = 'en-us'
@@ -117,6 +126,7 @@ REST_FRAMEWORK = {
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
+    "https://shout-sync.vercel.app",  # Add your Vercel frontend
 ]
 
 CORS_ALLOW_CREDENTIALS = True

@@ -30,9 +30,29 @@ api.interceptors.response.use(
   }
 );
 
+// Define proper types for API requests
+export interface LoginCredentials {
+  email_or_username: string;
+  password: string;
+}
+
+export interface RegisterData {
+  email: string;
+  username?: string;
+  password: string;
+  first_name?: string;
+  last_name?: string;
+}
+
 export const authAPI = {
-  register: (userData: any) => api.post('/auth/register/', userData),
-  login: (credentials: any) => api.post('/auth/login/', credentials),
+  register: (userData: RegisterData) => api.post('/auth/register/', userData),
+  login: (credentials: LoginCredentials) => api.post('/auth/login/', credentials),
+    checkAvailability: (email?: string, username?: string) => {
+    const params = new URLSearchParams();
+    if (email) params.append('email', email);
+    if (username) params.append('username', username);
+    return api.get(`/auth/check-availability/?${params.toString()}`);
+  },
   logout: () => api.post('/auth/logout/'),
   getProfile: () => api.get('/auth/profile/'),
   

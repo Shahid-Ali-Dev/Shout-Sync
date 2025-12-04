@@ -7,6 +7,7 @@ urlpatterns = [
     path('login/', views.login_view, name='login'),
     path('logout/', views.logout_view, name='logout'),
     path('profile/', views.profile_view, name='profile'),
+    path('check-availability/', views.check_availability_view, name='check-availability'),
     
     # Teams (updated from Organizations)
     path('teams/', views.teams_view, name='teams'),

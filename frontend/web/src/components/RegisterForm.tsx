@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+// src/components/RegisterForm.tsx
+import React, { useState, useEffect, useCallback } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { useNavigate, Link, useSearchParams } from 'react-router-dom';
 import {
@@ -29,10 +30,24 @@ import {
   VisibilityOff as VisibilityOffIcon,
   Rocket as RocketIcon,
   Groups as TeamsIcon,
+  CheckCircle as CheckCircleIcon,
+  Error as ErrorIcon,
 } from '@mui/icons-material';
 import { register, clearError } from '../shared/store/slices/authSlice';
 import { RootState, AppDispatch } from '../shared/store/store';
 import { authAPI } from '../shared/services/api';
+
+interface DjangoErrorObject {
+  email?: string | string[];
+  username?: string | string[];
+  password?: string | string[];
+  password_confirm?: string | string[];
+  first_name?: string | string[];
+  last_name?: string | string[];
+  detail?: string;
+  non_field_errors?: string | string[];
+  [key: string]: any;
+}
 
 const RegisterForm: React.FC = () => {
   const dispatch = useDispatch<AppDispatch>();
@@ -65,6 +80,13 @@ const RegisterForm: React.FC = () => {
   const [pendingInvitations, setPendingInvitations] = useState<any[]>([]);
   const [registrationSuccess, setRegistrationSuccess] = useState(false);
   const [processingInvitations, setProcessingInvitations] = useState(false);
+  
+  // New states for availability checking
+  const [checkingAvailability, setCheckingAvailability] = useState<string | null>(null);
+  const [availabilityErrors, setAvailabilityErrors] = useState<{ [key: string]: string }>({});
+
+  // Track debounce timers
+  const debounceTimers = React.useRef<{ [key: string]: NodeJS.Timeout }>({});
 
   // Check for pending invitations when component loads
   useEffect(() => {
@@ -132,6 +154,49 @@ const RegisterForm: React.FC = () => {
     handlePostRegistration();
   }, [isAuthenticated, user, invitationToken, pendingInvitations, navigate, registrationSuccess, processingInvitations]);
 
+  // Check availability with debounce
+  const checkAvailability = useCallback(async (field: 'email' | 'username', value: string) => {
+    if (!value || (field === 'email' && !value.includes('@'))) {
+      setAvailabilityErrors(prev => ({ ...prev, [field]: '' }));
+      return;
+    }
+
+    // Clear previous timer for this field
+    if (debounceTimers.current[field]) {
+      clearTimeout(debounceTimers.current[field]);
+    }
+
+    // Set new timer
+    debounceTimers.current[field] = setTimeout(async () => {
+      setCheckingAvailability(field);
+      try {
+        const params = new URLSearchParams();
+        if (field === 'email') params.append('email', value);
+        if (field === 'username') params.append('username', value);
+        
+        const response = await authAPI.checkAvailability(value, field === 'username' ? value : undefined);
+        const data = response.data;
+        
+        if (data[field]?.exists) {
+          setAvailabilityErrors(prev => ({ 
+            ...prev, 
+            [field]: field === 'email' 
+              ? 'Email already registered' 
+              : 'Username already taken' 
+          }));
+        } else {
+          setAvailabilityErrors(prev => ({ ...prev, [field]: '' }));
+        }
+      } catch (error) {
+        console.error(`Failed to check ${field} availability:`, error);
+        setAvailabilityErrors(prev => ({ ...prev, [field]: '' }));
+      } finally {
+        setCheckingAvailability(null);
+      }
+    }, 500);
+  }, []);
+
+  // FIXED: Removed dependency on availabilityErrors here to prevent stale state from sticking
   const validateField = (name: string, value: string) => {
     const errors: { [key: string]: string } = {};
     
@@ -141,14 +206,16 @@ const RegisterForm: React.FC = () => {
           errors.email = 'Email is required';
         } else if (!/\S+@\S+\.\S+/.test(value)) {
           errors.email = 'Email is invalid';
-        }
+        } 
+        // REMOVED: availability check here. Handled via availabilityErrors state directly
         break;
       case 'username':
         if (!value) {
           errors.username = 'Username is required';
         } else if (value.length < 3) {
           errors.username = 'Username must be at least 3 characters';
-        }
+        } 
+        // REMOVED: availability check here. Handled via availabilityErrors state directly
         break;
       case 'first_name':
         if (!value) errors.first_name = 'First name is required';
@@ -182,8 +249,17 @@ const RegisterForm: React.FC = () => {
       [name]: value,
     }));
 
+    // Clear local error when user starts typing
     if (localErrors[name]) {
       setLocalErrors(prev => ({
+        ...prev,
+        [name]: '',
+      }));
+    }
+
+    // Clear availability error when user starts typing
+    if (availabilityErrors[name]) {
+      setAvailabilityErrors(prev => ({
         ...prev,
         [name]: '',
       }));
@@ -193,6 +269,12 @@ const RegisterForm: React.FC = () => {
       dispatch(clearError());
     }
 
+    // Check availability for email and username
+    if (name === 'email' || name === 'username') {
+      checkAvailability(name as 'email' | 'username', value);
+    }
+
+    // Validate field in real-time if touched
     if (touched[name]) {
       const errors = validateField(name, value);
       setLocalErrors(prev => ({
@@ -232,26 +314,69 @@ const RegisterForm: React.FC = () => {
       return;
     }
 
+    // Check if email or username already exists one more time before submitting
+    if (availabilityErrors.email) {
+      setSnackbar({
+        open: true,
+        message: 'This email is already registered. Please sign in instead.',
+        severity: 'error'
+      });
+      setTimeout(() => {
+        navigate('/login', { state: { email: formData.email } });
+      }, 2000);
+      return;
+    }
+    
+    if (availabilityErrors.username) {
+       setSnackbar({
+        open: true,
+        message: 'Username is already taken.',
+        severity: 'error'
+      });
+      return;
+    }
+
     dispatch(register(formData));
   };
 
-  const getErrorMessage = () => {
-    if (error) {
-      if (error.includes('already exists') || error.includes('taken')) {
-        return 'An account with this email or username already exists.';
+  // Check if form is valid for submit button
+  const isFormValid = () => {
+    const requiredFields = ['email', 'username', 'password', 'password_confirm', 'first_name', 'last_name'];
+    
+    // Check all required fields are filled
+    for (const field of requiredFields) {
+      if (!formData[field as keyof typeof formData]) {
+        return false;
       }
-      if (error.includes('400')) {
-        return 'Please check all fields and try again.';
-      }
-      if (error.includes('Network Error')) {
-        return 'Unable to connect to the server. Please check your internet connection.';
-      }
-      return error;
     }
-    return null;
+    
+    // Check email format
+    if (!/\S+@\S+\.\S+/.test(formData.email)) {
+      return false;
+    }
+    
+    // Check username length
+    if (formData.username.length < 3) {
+      return false;
+    }
+    
+    // Check password length
+    if (formData.password.length < 6) {
+      return false;
+    }
+    
+    // Check passwords match
+    if (formData.password !== formData.password_confirm) {
+      return false;
+    }
+    
+    // Check for availability errors
+    if (availabilityErrors.email || availabilityErrors.username) {
+      return false;
+    }
+    
+    return true;
   };
-
-  const errorMessage = getErrorMessage();
 
   // Show loading state after successful registration
   if ((isAuthenticated && registrationSuccess) || processingInvitations) {
@@ -333,6 +458,7 @@ const RegisterForm: React.FC = () => {
                 left: 0,
                 right: 0,
                 height: '4px',
+                background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
               },
             }}
           >
@@ -437,23 +563,6 @@ const RegisterForm: React.FC = () => {
               </Fade>
             )}
 
-            {/* Error Alert */}
-            {errorMessage && (
-              <Fade in={true}>
-                <Alert
-                  severity="error"
-                  sx={{
-                    mb: 3,
-                    borderRadius: 2,
-                    border: '1px solid',
-                    borderColor: 'error.light',
-                  }}
-                >
-                  {errorMessage}
-                </Alert>
-              </Fade>
-            )}
-
             <Box component="form" onSubmit={handleSubmit} sx={{ mt: 1 }}>
               <Grid container spacing={2}>
                 {/* Email */}
@@ -468,13 +577,34 @@ const RegisterForm: React.FC = () => {
                     value={formData.email}
                     onChange={handleChange}
                     onBlur={handleBlur}
-                    error={touched.email && !!localErrors.email}
-                    helperText={touched.email && localErrors.email}
+                    error={touched.email && (!!localErrors.email || !!availabilityErrors.email)}
+                    helperText={
+                      touched.email && 
+                      (localErrors.email || availabilityErrors.email || '')
+                    }
                     disabled={!!invitationEmail}
                     InputProps={{
                       startAdornment: (
                         <InputAdornment position="start">
-                          <EmailIcon color={touched.email && localErrors.email ? 'error' : 'action'} />
+                          <EmailIcon 
+                            color={
+                              touched.email && 
+                              (localErrors.email || availabilityErrors.email) 
+                                ? 'error' 
+                                : 'action'
+                            } 
+                          />
+                        </InputAdornment>
+                      ),
+                      endAdornment: (
+                        <InputAdornment position="end">
+                          {checkingAvailability === 'email' ? (
+                            <CircularProgress size={20} />
+                          ) : availabilityErrors.email ? (
+                            <ErrorIcon color="error" />
+                          ) : formData.email && /\S+@\S+\.\S+/.test(formData.email) && !availabilityErrors.email ? (
+                            <CheckCircleIcon color="success" />
+                          ) : null}
                         </InputAdornment>
                       ),
                     }}
@@ -502,12 +632,33 @@ const RegisterForm: React.FC = () => {
                     value={formData.username}
                     onChange={handleChange}
                     onBlur={handleBlur}
-                    error={touched.username && !!localErrors.username}
-                    helperText={touched.username && localErrors.username}
+                    error={touched.username && (!!localErrors.username || !!availabilityErrors.username)}
+                    helperText={
+                      touched.username && 
+                      (localErrors.username || availabilityErrors.username || '')
+                    }
                     InputProps={{
                       startAdornment: (
                         <InputAdornment position="start">
-                          <PersonIcon color={touched.username && localErrors.username ? 'error' : 'action'} />
+                          <PersonIcon 
+                            color={
+                              touched.username && 
+                              (localErrors.username || availabilityErrors.username) 
+                                ? 'error' 
+                                : 'action'
+                            } 
+                          />
+                        </InputAdornment>
+                      ),
+                      endAdornment: (
+                        <InputAdornment position="end">
+                          {checkingAvailability === 'username' ? (
+                            <CircularProgress size={20} />
+                          ) : availabilityErrors.username ? (
+                            <ErrorIcon color="error" />
+                          ) : formData.username && formData.username.length >= 3 && !availabilityErrors.username ? (
+                            <CheckCircleIcon color="success" />
+                          ) : null}
                         </InputAdornment>
                       ),
                     }}
@@ -553,102 +704,135 @@ const RegisterForm: React.FC = () => {
                   />
                 </Grid>
 
-              {/* Password Field - FIXED */}
-              <Grid item xs={12} sm={6}>
-                <TextField
-                  required
-                  fullWidth
-                  name="password"
-                  label="Password"
-                  type={showPassword ? 'text' : 'password'}  // Use showPassword state
-                  id="password"
-                  autoComplete="new-password"
-                  value={formData.password}
-                  onChange={handleChange}
-                  onBlur={handleBlur}
-                  error={touched.password && !!localErrors.password}
-                  helperText={touched.password && localErrors.password}
-                  InputProps={{
-                    startAdornment: (
-                      <InputAdornment position="start">
-                        <LockIcon color={touched.password && localErrors.password ? 'error' : 'action'} />
-                      </InputAdornment>
-                    ),
-                    endAdornment: (
-                      <InputAdornment position="end">
-                        <IconButton
-                          aria-label="toggle password visibility"  // Correct label
-                          onClick={() => setShowPassword(!showPassword)}  // Correct state
-                          edge="end"
-                        >
-                          {showPassword ? <VisibilityIcon /> : <VisibilityOffIcon />} 
-                        </IconButton>
-                      </InputAdornment>
-                    ),
-                  }}
-                  sx={{
-                    '& .MuiOutlinedInput-root': {
-                      borderRadius: 2,
-                      transition: 'all 0.3s ease',
-                      '&:hover': {
-                        transform: 'translateY(-1px)',
+                {/* Password Field */}
+                <Grid item xs={12} sm={6}>
+                  <TextField
+                    required
+                    fullWidth
+                    name="password"
+                    label="Password"
+                    type={showPassword ? 'text' : 'password'}
+                    id="password"
+                    autoComplete="new-password"
+                    value={formData.password}
+                    onChange={handleChange}
+                    onBlur={handleBlur}
+                    error={touched.password && !!localErrors.password}
+                    helperText={touched.password && localErrors.password}
+                    InputProps={{
+                      startAdornment: (
+                        <InputAdornment position="start">
+                          <LockIcon color={touched.password && localErrors.password ? 'error' : 'action'} />
+                        </InputAdornment>
+                      ),
+                      endAdornment: (
+                        <InputAdornment position="end">
+                          <IconButton
+                            aria-label="toggle password visibility"
+                            onClick={() => setShowPassword(!showPassword)}
+                            edge="end"
+                          >
+                            {showPassword ? <VisibilityIcon /> : <VisibilityOffIcon />} 
+                          </IconButton>
+                        </InputAdornment>
+                      ),
+                    }}
+                    sx={{
+                      '& .MuiOutlinedInput-root': {
+                        borderRadius: 2,
+                        transition: 'all 0.3s ease',
+                        '&:hover': {
+                          transform: 'translateY(-1px)',
+                        },
                       },
-                    },
-                  }}
-                />
+                    }}
+                  />
+                </Grid>
+
+                {/* Confirm Password Field */}
+                <Grid item xs={12} sm={6}>
+                  <TextField
+                    required
+                    fullWidth
+                    name="password_confirm"
+                    label="Confirm Password"
+                    type={showConfirmPassword ? 'text' : 'password'}
+                    id="password_confirm"
+                    value={formData.password_confirm}
+                    onChange={handleChange}
+                    onBlur={handleBlur}
+                    error={touched.password_confirm && !!localErrors.password_confirm}
+                    helperText={touched.password_confirm && localErrors.password_confirm}
+                    InputProps={{
+                      startAdornment: (
+                        <InputAdornment position="start">
+                          <LockIcon color={touched.password_confirm && localErrors.password_confirm ? 'error' : 'action'} />
+                        </InputAdornment>
+                      ),
+                      endAdornment: (
+                        <InputAdornment position="end">
+                          <IconButton
+                            aria-label="toggle confirm password visibility"
+                            onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                            edge="end"
+                          >
+                            {showConfirmPassword ? <VisibilityIcon /> : <VisibilityOffIcon />} 
+                          </IconButton>
+                        </InputAdornment>
+                      ),
+                    }}
+                    sx={{
+                      '& .MuiOutlinedInput-root': {
+                        borderRadius: 2,
+                        transition: 'all 0.3s ease',
+                        '&:hover': {
+                          transform: 'translateY(-1px)',
+                        },
+                      },
+                    }}
+                  />
+                </Grid>
               </Grid>
 
-              {/* Confirm Password Field - FIXED */}
-              <Grid item xs={12} sm={6}>
-                <TextField
-                  required
-                  fullWidth
-                  name="password_confirm"
-                  label="Confirm Password"
-                  type={showConfirmPassword ? 'text' : 'password'}  // Use showConfirmPassword state
-                  id="password_confirm"
-                  value={formData.password_confirm}
-                  onChange={handleChange}
-                  onBlur={handleBlur}
-                  error={touched.password_confirm && !!localErrors.password_confirm}
-                  helperText={touched.password_confirm && localErrors.password_confirm}
-                  InputProps={{
-                    startAdornment: (
-                      <InputAdornment position="start">
-                        <LockIcon color={touched.password_confirm && localErrors.password_confirm ? 'error' : 'action'} />
-                      </InputAdornment>
-                    ),
-                    endAdornment: (
-                      <InputAdornment position="end">
-                        <IconButton
-                          aria-label="toggle confirm password visibility"  // Correct label
-                          onClick={() => setShowConfirmPassword(!showConfirmPassword)}  // Correct state
-                          edge="end"
-                        >
-                          {showConfirmPassword ? <VisibilityIcon /> : <VisibilityOffIcon />} 
-                        </IconButton>
-                      </InputAdornment>
-                    ),
+              {/* Password Requirements Hint */}
+              <Box sx={{ mt: 2, mb: 1 }}>
+                <Typography variant="caption" color="text.secondary">
+                  ⚠️ Password must be at least 6 characters long
+                </Typography>
+              </Box>
+
+              {/* Email already registered message */}
+              {availabilityErrors.email && (
+                <Alert 
+                  severity="error" 
+                  sx={{ 
+                    mt: 2,
+                    borderRadius: 2,
+                    '& .MuiAlert-message': { width: '100%' }
                   }}
-                  sx={{
-                    '& .MuiOutlinedInput-root': {
-                      borderRadius: 2,
-                      transition: 'all 0.3s ease',
-                      '&:hover': {
-                        transform: 'translateY(-1px)',
-                      },
-                    },
-                  }}
-                />
-              </Grid>
-              </Grid>
+                >
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
+                    <Typography variant="body2">
+                      Email already registered
+                    </Typography>
+                    <Button 
+                      size="small" 
+                      variant="outlined"
+                      sx={{ ml: 2, textTransform: 'none' }}
+                      onClick={() => navigate('/login', { state: { email: formData.email } })}
+                    >
+                      Sign in instead
+                    </Button>
+                  </Box>
+                </Alert>
+              )}
 
               {/* Submit Button */}
               <Button
                 type="submit"
                 fullWidth
                 variant="contained"
-                disabled={loading}
+                disabled={loading || !isFormValid()}
                 size="large"
                 sx={{
                   mt: 3,
@@ -701,9 +885,12 @@ const RegisterForm: React.FC = () => {
                     fontSize: '1rem',
                     fontWeight: 600,
                     borderWidth: 2,
+                    borderColor: 'primary.main',
+                    color: 'primary.main',
                     '&:hover': {
                       borderWidth: 2,
                       transform: 'translateY(-1px)',
+                      backgroundColor: 'rgba(102, 126, 234, 0.04)',
                     },
                   }}
                 >

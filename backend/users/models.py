@@ -5,11 +5,12 @@ from django.db import models
 from django.contrib.auth.models import AbstractUser
 from django.conf import settings
 
+
 # User model (keep your existing User model, just remove the circular imports)
 class User(AbstractUser):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     email = models.EmailField(unique=True)
-    username = models.CharField(max_length=150, unique=True)
+    username = models.CharField(max_length=150, unique=True, blank=True, null=True)  # Make optional
     phone_number = models.CharField(max_length=20, blank=True, null=True)
     avatar = models.ImageField(upload_to='avatars/', blank=True, null=True)
     bio = models.TextField(blank=True, null=True)
@@ -19,10 +20,30 @@ class User(AbstractUser):
     updated_at = models.DateTimeField(auto_now=True)
 
     USERNAME_FIELD = 'email'
-    REQUIRED_FIELDS = ['username']
+    REQUIRED_FIELDS = []  # Empty since username is not required
 
     def __str__(self):
         return self.email
+
+    def save(self, *args, **kwargs):
+        # Auto-generate username from email if not provided
+        if not self.username:
+            # Generate a unique username from email
+            base_username = self.email.split('@')[0]
+            username = base_username
+            counter = 1
+            
+            # Import here to avoid circular import
+            from django.apps import apps
+            User = apps.get_model('users', 'User')
+            
+            # Check if username already exists
+            while User.objects.filter(username=username).exclude(pk=self.pk).exists():
+                username = f"{base_username}{counter}"
+                counter += 1
+            
+            self.username = username
+        super().save(*args, **kwargs)
 
 class Notification(models.Model):
     class Type(models.IntegerChoices):

@@ -20,6 +20,12 @@ interface AuthState {
   error: string | null;
 }
 
+// Define login credentials interface
+interface LoginCredentials {
+  email_or_username: string;
+  password: string;
+}
+
 const initialState: AuthState = {
   user: null,
   token: localStorage.getItem('token'),
@@ -50,12 +56,31 @@ export const register = createAsyncThunk(
 
 export const login = createAsyncThunk(
   'auth/login',
-  async (credentials: { email: string; password: string }, { rejectWithValue }) => {
+  async (credentials: LoginCredentials, { rejectWithValue }) => {
     try {
       const response = await authAPI.login(credentials);
       return response.data;
     } catch (error: any) {
-      return rejectWithValue(error.response?.data?.error || 'Login failed');
+      // Normalize the error response
+      const errorData = error.response?.data;
+      
+      if (errorData) {
+        // If it's already an object with error details, return it as-is
+        if (typeof errorData === 'object' && errorData !== null) {
+          return rejectWithValue(errorData);
+        }
+        // If it's a string, return it
+        if (typeof errorData === 'string') {
+          return rejectWithValue(errorData);
+        }
+      }
+      
+      // Handle network errors or other issues
+      if (error.message) {
+        return rejectWithValue(error.message);
+      }
+      
+      return rejectWithValue('Login failed. Please check your credentials and try again.');
     }
   }
 );
@@ -114,7 +139,8 @@ const authSlice = createSlice({
       })
       .addCase(login.rejected, (state, action) => {
         state.loading = false;
-        state.error = action.payload as string || 'Login failed';
+        // The error can be a string or an object from Django
+        state.error = action.payload as any;
       })
       // Logout
       .addCase(logout.pending, (state) => {
@@ -135,4 +161,8 @@ const authSlice = createSlice({
 });
 
 export const { clearError, setCredentials } = authSlice.actions;
+
+// Export the LoginCredentials type
+export type { LoginCredentials };
+
 export default authSlice.reducer;

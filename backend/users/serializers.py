@@ -8,40 +8,80 @@ from .models import (
     TeamJoinRequest, ActivityLog, ProjectAssignee, ProjectPermission
 )
 
-# User serializers
 class UserRegistrationSerializer(serializers.ModelSerializer):
-    password = serializers.CharField(write_only=True, min_length=6)
     password_confirm = serializers.CharField(write_only=True)
-
+    
     class Meta:
         model = User
         fields = ('email', 'username', 'password', 'password_confirm', 'first_name', 'last_name')
-
-    def validate(self, attrs):
-        if attrs['password'] != attrs['password_confirm']:
-            raise serializers.ValidationError("Passwords don't match")
-        return attrs
-
+        extra_kwargs = {
+            'password': {'write_only': True},
+        }
+    
+    def validate(self, data):
+        email = data.get('email')
+        username = data.get('username')
+        
+        # Check if email already exists
+        if User.objects.filter(email=email).exists():
+            raise serializers.ValidationError({
+                'email': ['A user with this email already exists.']
+            })
+        
+        # Check if username already exists
+        if User.objects.filter(username=username).exists():
+            raise serializers.ValidationError({
+                'username': ['A user with this username already exists.']
+            })
+        
+        # Check if passwords match
+        if data['password'] != data['password_confirm']:
+            raise serializers.ValidationError({
+                'password_confirm': ['Passwords do not match.']
+            })
+        
+        return data
+    
     def create(self, validated_data):
-        validated_data.pop('password_confirm')
-        user = User.objects.create_user(**validated_data)
+        # Remove password_confirm from validated_data
+        validated_data.pop('password_confirm', None)
+        
+        # Create user
+        user = User.objects.create_user(
+            email=validated_data['email'],
+            username=validated_data['username'],
+            password=validated_data['password'],
+            first_name=validated_data.get('first_name', ''),
+            last_name=validated_data.get('last_name', ''),
+        )
+        
         return user
 
 class UserLoginSerializer(serializers.Serializer):
-    email = serializers.EmailField()
-    password = serializers.CharField()
-
-    def validate(self, attrs):
-        email = attrs.get('email')
-        password = attrs.get('password')
-
-        if email and password:
-            user = authenticate(username=email, password=password)
-            if not user:
-                raise serializers.ValidationError('Invalid email or password')
-            attrs['user'] = user
-            return attrs
-        raise serializers.ValidationError('Email and password are required')
+    email_or_username = serializers.CharField()
+    password = serializers.CharField(write_only=True)
+    
+    def validate(self, data):
+        email_or_username = data.get('email_or_username')
+        password = data.get('password')
+        
+        if not email_or_username or not password:
+            raise serializers.ValidationError({
+                'email_or_username': 'This field is required.',
+                'password': 'This field is required.'
+            })
+        
+        # Use Django's authenticate with our custom backend
+        user = authenticate(username=email_or_username, password=password)
+        
+        if user is None:
+            raise serializers.ValidationError('Invalid email/username or password')
+        
+        if not user.is_active:
+            raise serializers.ValidationError('User account is disabled')
+        
+        data['user'] = user
+        return data
 
 class UserSerializer(serializers.ModelSerializer):
     class Meta:

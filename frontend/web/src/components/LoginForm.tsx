@@ -17,7 +17,7 @@ import {
   Divider,
 } from '@mui/material';
 import {
-  Email as EmailIcon,
+  Person as PersonIcon,
   Lock as LockIcon,
   Visibility as VisibilityIcon,
   VisibilityOff as VisibilityOffIcon,
@@ -26,18 +26,43 @@ import {
 import { login, clearError } from '../shared/store/slices/authSlice';
 import { RootState, AppDispatch } from '../shared/store/store';
 
+// Define proper types for the error object
+interface LoginCredentials {
+  email_or_username: string;
+  password: string;
+}
+
+interface ValidationErrors {
+  email_or_username?: string;
+  password?: string;
+}
+
+interface DjangoErrorObject {
+  email_or_username?: string | string[];
+  email?: string | string[];  
+  username?: string | string[]; 
+  password?: string | string[];
+  detail?: string;
+  non_field_errors?: string | string[];
+  message?: string;  
+  error?: string;    
+  [key: string]: any; // For other potential error fields
+}
+type ErrorType = string | DjangoErrorObject | null;
+
 const LoginForm: React.FC = () => {
   const dispatch = useDispatch<AppDispatch>();
   const navigate = useNavigate();
   const { loading, error, isAuthenticated } = useSelector((state: RootState) => state.auth);
 
-  const [formData, setFormData] = useState({
-    email: '',
+  const [formData, setFormData] = useState<LoginCredentials>({
+    email_or_username: '',
     password: '',
   });
   const [showPassword, setShowPassword] = useState(false);
-  const [localErrors, setLocalErrors] = useState<{ email?: string; password?: string }>({});
-  const [touched, setTouched] = useState({ email: false, password: false });
+  const [localErrors, setLocalErrors] = useState<ValidationErrors>({});
+  const [touched, setTouched] = useState({ email_or_username: false, password: false });
+  const [submitAttempted, setSubmitAttempted] = useState(false);
 
   useEffect(() => {
     if (isAuthenticated) {
@@ -45,14 +70,22 @@ const LoginForm: React.FC = () => {
     }
   }, [isAuthenticated, navigate]);
 
-  const validateField = (name: string, value: string) => {
-    const errors: { email?: string; password?: string } = {};
+  const validateField = (name: keyof LoginCredentials, value: string): ValidationErrors => {
+    const errors: ValidationErrors = {};
     
-    if (name === 'email') {
-      if (!value) {
-        errors.email = 'Email is required';
-      } else if (!/\S+@\S+\.\S+/.test(value)) {
-        errors.email = 'Email is invalid';
+    if (name === 'email_or_username') {
+      if (!value.trim()) {
+        errors.email_or_username = 'Email or username is required';
+      } else if (value.includes('@')) {
+        // Only validate email format if it contains @
+        const emailRegex = /\S+@\S+\.\S+/;
+        if (!emailRegex.test(value)) {
+          errors.email_or_username = 'Please enter a valid email address';
+        }
+      }
+      // Username validation (if you want additional constraints)
+      else if (value.length < 3) {
+        errors.email_or_username = 'Username must be at least 3 characters';
       }
     }
     
@@ -71,14 +104,14 @@ const LoginForm: React.FC = () => {
     const { name, value } = e.target;
     setFormData(prev => ({
       ...prev,
-      [name]: value,
+      [name as keyof LoginCredentials]: value,
     }));
 
     // Clear local error when user starts typing
-    if (localErrors[name as keyof typeof localErrors]) {
+    if (localErrors[name as keyof ValidationErrors]) {
       setLocalErrors(prev => ({
         ...prev,
-        [name]: undefined,
+        [name as keyof ValidationErrors]: undefined,
       }));
     }
 
@@ -89,7 +122,7 @@ const LoginForm: React.FC = () => {
 
     // Validate field in real-time if touched
     if (touched[name as keyof typeof touched]) {
-      const errors = validateField(name, value);
+      const errors = validateField(name as keyof LoginCredentials, value);
       setLocalErrors(prev => ({
         ...prev,
         ...errors,
@@ -104,7 +137,7 @@ const LoginForm: React.FC = () => {
       [name]: true,
     }));
 
-    const errors = validateField(name, value);
+    const errors = validateField(name as keyof LoginCredentials, value);
     setLocalErrors(prev => ({
       ...prev,
       ...errors,
@@ -113,36 +146,102 @@ const LoginForm: React.FC = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setSubmitAttempted(true);
     
     // Validate all fields
     const errors = {
-      ...validateField('email', formData.email),
+      ...validateField('email_or_username', formData.email_or_username),
       ...validateField('password', formData.password),
     };
 
     if (Object.keys(errors).length > 0) {
       setLocalErrors(errors);
-      setTouched({ email: true, password: true });
+      setTouched({ email_or_username: true, password: true });
       return;
     }
 
-    dispatch(login(formData));
+    // Dispatch login with the correct field names
+    dispatch(login({
+      email_or_username: formData.email_or_username,
+      password: formData.password
+    } as LoginCredentials));
   };
 
-  const getErrorMessage = () => {
-    if (error) {
-      if (error.includes('Invalid credentials') || error.includes('Unable to log in')) {
-        return 'Invalid email or password. Please check your credentials and try again.';
-      }
-      if (error.includes('400')) {
-        return 'Please check your email and password format.';
-      }
-      if (error.includes('Network Error')) {
-        return 'Unable to connect to the server. Please check your internet connection.';
-      }
+  const getErrorMessage = (): string | null => {
+    if (!error) return null;
+    
+    // First, check if error is already a string
+    if (typeof error === 'string') {
       return error;
     }
-    return null;
+    
+    // Handle object errors (e.g., from Django serializer)
+    if (typeof error === 'object' && error !== null) {
+      const djangoError = error as DjangoErrorObject;
+      
+      // Check for nested error messages
+      if (djangoError.email_or_username) {
+        if (Array.isArray(djangoError.email_or_username)) {
+          return djangoError.email_or_username[0];
+        }
+        return djangoError.email_or_username as string;
+      }
+      
+      if (djangoError.password) {
+        if (Array.isArray(djangoError.password)) {
+          return djangoError.password[0];
+        }
+        return djangoError.password as string;
+      }
+      
+      if (djangoError.detail) {
+        if (typeof djangoError.detail === 'string') {
+          return djangoError.detail;
+        }
+        return 'An error occurred';
+      }
+      
+      if (djangoError.non_field_errors) {
+        if (Array.isArray(djangoError.non_field_errors)) {
+          return djangoError.non_field_errors[0];
+        }
+        return djangoError.non_field_errors as string;
+      }
+      
+      // Handle specific Django validation errors
+      if (djangoError.email) {
+        if (Array.isArray(djangoError.email)) {
+          return djangoError.email[0];
+        }
+        return djangoError.email as string;
+      }
+      
+      if (djangoError.username) {
+        if (Array.isArray(djangoError.username)) {
+          return djangoError.username[0];
+        }
+        return djangoError.username as string;
+      }
+      
+      // If it's an object with a message property
+      if (djangoError.message) {
+        return djangoError.message as string;
+      }
+      
+      // If it's an object with an error property
+      if (djangoError.error) {
+        return djangoError.error as string;
+      }
+      
+      // Try to stringify the object to see what's in it
+      try {
+        return JSON.stringify(djangoError);
+      } catch {
+        return 'An error occurred';
+      }
+    }
+    
+    return 'An unexpected error occurred. Please try again.';
   };
 
   const errorMessage = getErrorMessage();
@@ -188,6 +287,7 @@ const LoginForm: React.FC = () => {
                 left: 0,
                 right: 0,
                 height: '4px',
+                background: 'none',
               },
             }}
           >
@@ -195,17 +295,16 @@ const LoginForm: React.FC = () => {
             <Box sx={{ textAlign: 'center', mb: 4 }}>
               <Fade in={true} timeout={1000}>
                 <Box>
-                    <RocketIcon
-                      sx={{
-                        fontSize: 48,
-                        iconColor: 'primary.main',
-                        mb: 2,
-                        background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-                        backgroundClip: 'text',
-                        WebkitBackgroundClip: 'text',
-                        color: 'transparent',
-                      }}
-                    />
+                  <RocketIcon
+                    sx={{
+                      fontSize: 48,
+                      mb: 2,
+                      background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                      backgroundClip: 'text',
+                      WebkitBackgroundClip: 'text',
+                      color: 'transparent',
+                    }}
+                  />
                   <Typography
                     component="h1"
                     variant="h3"
@@ -241,6 +340,9 @@ const LoginForm: React.FC = () => {
                     borderRadius: 2,
                     border: '1px solid',
                     borderColor: 'error.light',
+                    '& .MuiAlert-message': {
+                      width: '100%',
+                    },
                   }}
                 >
                   {errorMessage}
@@ -248,25 +350,41 @@ const LoginForm: React.FC = () => {
               </Fade>
             )}
 
+            {/* Form validation errors summary */}
+            {submitAttempted && (localErrors.email_or_username || localErrors.password) && !errorMessage && (
+              <Alert
+                severity="error"
+                sx={{
+                  mb: 3,
+                  borderRadius: 2,
+                }}
+              >
+                Please fix the errors below to continue.
+              </Alert>
+            )}
+
             <Box component="form" onSubmit={handleSubmit} sx={{ mt: 1 }}>
-              {/* Email Field */}
+              {/* Email/Username Field */}
               <TextField
                 margin="normal"
                 required
                 fullWidth
-                id="email"
-                label="Email Address"
-                name="email"
-                autoComplete="email"
-                value={formData.email}
+                id="email_or_username"
+                label="Email or Username"
+                name="email_or_username"
+                autoComplete="username"
+                value={formData.email_or_username}
                 onChange={handleChange}
                 onBlur={handleBlur}
-                error={touched.email && !!localErrors.email}
-                helperText={touched.email && localErrors.email}
+                error={(touched.email_or_username || submitAttempted) && !!localErrors.email_or_username}
+                helperText={(touched.email_or_username || submitAttempted) && localErrors.email_or_username}
+                disabled={loading}
                 InputProps={{
                   startAdornment: (
                     <InputAdornment position="start">
-                      <EmailIcon color={touched.email && localErrors.email ? 'error' : 'action'} />
+                      <PersonIcon 
+                        color={(touched.email_or_username || submitAttempted) && localErrors.email_or_username ? 'error' : 'action'} 
+                      />
                     </InputAdornment>
                   ),
                 }}
@@ -276,6 +394,10 @@ const LoginForm: React.FC = () => {
                     transition: 'all 0.3s ease',
                     '&:hover': {
                       transform: 'translateY(-1px)',
+                      boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
+                    },
+                    '&.Mui-focused': {
+                      boxShadow: '0 0 0 2px rgba(102, 126, 234, 0.2)',
                     },
                   },
                 }}
@@ -294,12 +416,15 @@ const LoginForm: React.FC = () => {
                 value={formData.password}
                 onChange={handleChange}
                 onBlur={handleBlur}
-                error={touched.password && !!localErrors.password}
-                helperText={touched.password && localErrors.password}
+                error={(touched.password || submitAttempted) && !!localErrors.password}
+                helperText={(touched.password || submitAttempted) && localErrors.password}
+                disabled={loading}
                 InputProps={{
                   startAdornment: (
                     <InputAdornment position="start">
-                      <LockIcon color={touched.password && localErrors.password ? 'error' : 'action'} />
+                      <LockIcon 
+                        color={(touched.password || submitAttempted) && localErrors.password ? 'error' : 'action'} 
+                      />
                     </InputAdornment>
                   ),
                   endAdornment: (
@@ -308,6 +433,7 @@ const LoginForm: React.FC = () => {
                         aria-label="toggle password visibility"
                         onClick={() => setShowPassword(!showPassword)}
                         edge="end"
+                        disabled={loading}
                       >
                         {showPassword ? <VisibilityIcon /> : <VisibilityOffIcon />}
                       </IconButton>
@@ -320,6 +446,10 @@ const LoginForm: React.FC = () => {
                     transition: 'all 0.3s ease',
                     '&:hover': {
                       transform: 'translateY(-1px)',
+                      boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
+                    },
+                    '&.Mui-focused': {
+                      boxShadow: '0 0 0 2px rgba(102, 126, 234, 0.2)',
                     },
                   },
                 }}
@@ -353,10 +483,19 @@ const LoginForm: React.FC = () => {
                     transform: 'none',
                     boxShadow: 'none',
                   },
+                  position: 'relative',
                 }}
               >
                 {loading ? (
-                  <CircularProgress size={24} sx={{ color: 'white' }} />
+                  <CircularProgress 
+                    size={24} 
+                    sx={{ 
+                      color: 'white',
+                      position: 'absolute',
+                      left: '50%',
+                      transform: 'translateX(-50%)',
+                    }} 
+                  />
                 ) : (
                   'Sign In'
                 )}
@@ -383,9 +522,12 @@ const LoginForm: React.FC = () => {
                     fontSize: '1rem',
                     fontWeight: 600,
                     borderWidth: 2,
+                    borderColor: 'primary.main',
+                    color: 'primary.main',
                     '&:hover': {
                       borderWidth: 2,
                       transform: 'translateY(-1px)',
+                      backgroundColor: 'rgba(102, 126, 234, 0.04)',
                     },
                   }}
                 >
@@ -403,9 +545,22 @@ const LoginForm: React.FC = () => {
                       color: '#667eea',
                       fontWeight: 500,
                     }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.textDecoration = 'underline';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.textDecoration = 'none';
+                    }}
                   >
                     Forgot your password?
                   </Link>
+                </Typography>
+              </Box>
+
+              {/* Demo credentials hint */}
+              <Box textAlign="center" sx={{ mt: 3, pt: 2, borderTop: '1px dashed #e0e0e0' }}>
+                <Typography variant="caption" color="text.secondary">
+                  💡 Tip: You can use either your email or username to login
                 </Typography>
               </Box>
             </Box>

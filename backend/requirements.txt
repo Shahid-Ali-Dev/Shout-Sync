@@ -11,15 +11,10 @@ channels==4.0.0
 channels-redis==4.1.0
 Pillow==10.0.1
 requests==2.31.0
-brevo==1.0.0
+sib-api-v3-sdk==7.6.0  # Changed from 9.0.0 to 7.6.0 (latest available)
 groq==0.3.0
 
 # Production dependencies
 gunicorn==21.2.0
 whitenoise==6.6.0
 python-multipart==0.0.6
-
-# Database (keep only one)
-psycopg2-binary==2.9.7  # For PostgreSQL
-# Optional: If you want to use environment variables
-python-dotenv==1.0.0

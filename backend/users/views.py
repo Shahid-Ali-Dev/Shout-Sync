@@ -96,12 +96,48 @@ def login_view(request):
             user = serializer.validated_data['user']
             # Create or get token
             token, created = Token.objects.get_or_create(user=user)
+            
+            # Update last login
+            user.last_login = timezone.now()
+            user.save()
+            
             return Response({
                 'user': UserSerializer(user).data,
                 'token': token.key,
                 'message': 'Login successful'
-            })
+            }, status=status.HTTP_200_OK)
+        
+        # Return validation errors
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+@api_view(['GET'])
+@permission_classes([permissions.AllowAny])
+def check_availability_view(request):
+    """
+    Check if email or username is available (for real-time validation)
+    """
+    email = request.GET.get('email')
+    username = request.GET.get('username')
+    
+    results = {}
+    
+    if email:
+        email_exists = User.objects.filter(email=email).exists()
+        results['email'] = {
+            'available': not email_exists,
+            'exists': email_exists,
+            'message': 'Email already registered' if email_exists else 'Email available'
+        }
+    
+    if username:
+        username_exists = User.objects.filter(username=username).exists()
+        results['username'] = {
+            'available': not username_exists,
+            'exists': username_exists,
+            'message': 'Username already taken' if username_exists else 'Username available'
+        }
+    
+    return Response(results)
 
 @api_view(['POST'])
 def logout_view(request):
