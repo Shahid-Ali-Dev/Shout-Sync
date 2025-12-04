@@ -1263,9 +1263,7 @@ def projects_view(request, team_id):
 def project_detail_view(request, team_id, project_id):
     team = get_object_or_404(Team, id=team_id)
     
-    # OPTIMIZATION: Fetch project with all related data AND annotations
     if request.method == 'GET':
-        # Define the favorite subquery
         is_favorite_subquery = Project.favorited_by.through.objects.filter(
             project_id=OuterRef('pk'),
             user_id=request.user.id
@@ -1279,7 +1277,6 @@ def project_detail_view(request, team_id, project_id):
                 'memberships',
                 'permissions'
             ).annotate(
-                # Add the annotations here too so the Detail page is fast
                 active_task_count=Count('tasks'),
                 active_member_count=Count('memberships', distinct=True),
                 is_user_favorite=Exists(is_favorite_subquery)
@@ -1288,10 +1285,8 @@ def project_detail_view(request, team_id, project_id):
             team=team
         )
     else:
-        # For PUT/DELETE we don't need heavy annotations
         project = get_object_or_404(Project, id=project_id, team=team)
     
-    # Get user's permissions
     permission = get_user_project_permissions(request.user, project)
     
     if not permission:
@@ -1302,10 +1297,8 @@ def project_detail_view(request, team_id, project_id):
         return Response(serializer.data)
     
     elif request.method == 'PUT':
-        # Check what fields user is trying to update
         allowed_updates = {}
         
-        # 1. Handle Basic Fields
         if 'name' in request.data:
             if permission.can_edit_name: allowed_updates['name'] = request.data['name']
             else: return Response({'error': 'No permission to edit name'}, status=status.HTTP_403_FORBIDDEN)
@@ -1326,97 +1319,91 @@ def project_detail_view(request, team_id, project_id):
             if permission.can_edit_status: allowed_updates['status'] = request.data['status']
             else: return Response({'error': 'No permission to edit status'}, status=status.HTTP_403_FORBIDDEN)
 
-        # 2. Handle Team Transfer
         if 'team' in request.data and str(request.data['team']) != str(team.id):
             if permission.can_transfer_project:
-                # ... (Keep your existing target team permission check here) ...
                 allowed_updates['team'] = request.data['team']
             else:
                 return Response({'error': 'No permission to transfer project'}, status=status.HTTP_403_FORBIDDEN)
-        
-        
 
-        # 3. Handle Assignees Properly - FIXED VERSION
+        # 3. Handle Assignees Properly
         if 'assignee_ids' in request.data and 'assignee_roles' in request.data:
-            if permission.can_manage_members or permission.can_assign_tasks:
-                assignee_ids = request.data.get('assignee_ids', [])
-                assignee_roles = request.data.get('assignee_roles', [])
-                
-                # Get current assignees to track what to remove
-                current_assignees = ProjectAssignee.objects.filter(project=project)
-                current_assignee_user_ids = [str(a.user.id) for a in current_assignees]
-                
-                # Track users to keep (from new list)
-                users_to_keep = []
-                
-                # Update or create assignees
-                for i, assignee_id in enumerate(assignee_ids):
-                    try:
-                        assignee_user = User.objects.get(id=assignee_id)
-                        role = assignee_roles[i] if i < len(assignee_roles) else 1
-                        
-                        # Check if user is a team member
-                        if not TeamMember.objects.filter(team=team, user=assignee_user, is_active=True).exists():
-                            continue
-                        
-                        users_to_keep.append(str(assignee_user.id))
-                        
-                        # Ensure project membership
-                        ProjectMember.objects.update_or_create(
-                            project=project,
-                            user=assignee_user,
-                            defaults={'role': ProjectMember.Role.CONTRIBUTOR}
-                        )
-                        
-                        # UPDATE OR CREATE assignee entry - THIS IS THE FIX
-                        ProjectAssignee.objects.update_or_create(
-                            project=project,
-                            user=assignee_user,
-                            defaults={
-                                'role': role,
-                                'assigned_by': request.user,
-                                'is_lead': (role == 3)
-                            }
-                        )
-                        
-                    except User.DoesNotExist:
-                        continue
-                
-                # Remove assignees not in the new list (except creator)
-            for assignee in current_assignees:
-                    if str(assignee.user.id) not in users_to_keep and assignee.user != project.created_by:
-                        # 1. Capture the user before deleting the assignee record
-                        user_to_remove = assignee.user
-                        
-                        # 2. Delete the Assignee record (Removes from Dialog)
-                        assignee.delete()
-                        
-                        # 3. FIX: Also delete the ProjectMember record (Fixes the Count on Dashboard)
-                        ProjectMember.objects.filter(
-                            project=project, 
-                            user=user_to_remove
-                        ).delete()
-                        
-                        # 4. Also remove any specific permissions they had
-                        ProjectPermission.objects.filter(
-                            project=project,
-                            user=user_to_remove
-                        ).delete()
-            else:
+            # Guard Clause: Check permission FIRST
+            if not (permission.can_manage_members or permission.can_assign_tasks):
                 return Response({'error': 'No permission to manage assignees'}, status=status.HTTP_403_FORBIDDEN)
 
-        # 4. Save updates
+            assignee_ids = request.data.get('assignee_ids', [])
+            assignee_roles = request.data.get('assignee_roles', [])
+            
+            current_assignees = ProjectAssignee.objects.filter(project=project)
+            users_to_keep = []
+            
+            for i, assignee_id in enumerate(assignee_ids):
+                try:
+                    assignee_user = User.objects.get(id=assignee_id)
+                    role = assignee_roles[i] if i < len(assignee_roles) else 1
+                    
+                    if not TeamMember.objects.filter(team=team, user=assignee_user, is_active=True).exists():
+                        continue
+                    
+                    users_to_keep.append(str(assignee_user.id))
+                    
+                    ProjectMember.objects.update_or_create(
+                        project=project,
+                        user=assignee_user,
+                        defaults={'role': ProjectMember.Role.CONTRIBUTOR}
+                    )
+                    
+                    ProjectAssignee.objects.update_or_create(
+                        project=project,
+                        user=assignee_user,
+                        defaults={
+                            'role': role,
+                            'assigned_by': request.user,
+                            'is_lead': (role == 3)
+                        }
+                    )
+                except User.DoesNotExist:
+                    continue
+            
+            for assignee in current_assignees:
+                # OLD LINE: Prevents removing creator
+                # if str(assignee.user.id) not in users_to_keep and assignee.user != project.created_by:
+                
+                # NEW LINE: Allow removing anyone (including creator) as long as they aren't in the new list
+                if str(assignee.user.id) not in users_to_keep:
+                    user_to_remove = assignee.user
+                    assignee.delete()
+                    
+                    # ... delete ProjectMember ...
+                    ProjectMember.objects.filter(
+                        project=project, 
+                        user=user_to_remove
+                    ).delete()
+                    
+                    # ... delete Permission ...
+                    ProjectPermission.objects.filter(
+                        project=project,
+                        user=user_to_remove
+                    ).delete()
+
         serializer = ProjectCreateSerializer(project, data=allowed_updates, partial=True, context={'request': request})
         if serializer.is_valid():
             serializer.save()
-            # ... logging code ...
-            # Response serializer uses the SAFE ProjectSerializer we just fixed
+            
+            create_activity_log(
+                user=request.user,
+                action_type=ActivityLog.ActionType.PROJECT_UPDATED,
+                description=f"Updated project '{project.name}'",
+                details={'updated_fields': list(allowed_updates.keys())},
+                team=team,
+                project=project
+            )
+            
             response_serializer = ProjectSerializer(project, context={'request': request})
             return Response(response_serializer.data)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
     
     elif request.method == 'DELETE':
-        # Only project creator or team owner/admin can delete
         if not (project.created_by == request.user or permission.can_delete_project):
             return Response({'error': 'Insufficient permissions'}, status=status.HTTP_403_FORBIDDEN)
         
@@ -2095,82 +2082,57 @@ def recent_activity_view(request, team_id):
     serializer = ActivityLogSerializer(activities, many=True)
     return Response(serializer.data)
 
-# Add helper function at the top of views.py
 def get_user_project_permissions(user, project):
     """
     Get or calculate user's permissions for a project.
-    Optimized to calculate in-memory without writing to DB on GET requests.
+    Prioritizes Team Role > Project Assignee Role > Stored Permission.
     """
-    # 1. OPTIMIZATION: Check if permissions are already prefetched on the project object
-    # This leverages the prefetch_related('permissions') you added to the view
-    if hasattr(project, '_prefetched_objects_cache') and 'permissions' in project._prefetched_objects_cache:
-        # Look for this user's permission in the cached list
-        permission = next((p for p in project.permissions.all() if p.user_id == user.id), None)
-        if permission:
-            return permission
-
-    # 2. Fallback: Query DB if not cached (but don't create yet)
-    permission = ProjectPermission.objects.filter(project=project, user=user).first()
-    if permission:
-        return permission
-
-    # 3. If no specific permission object exists, calculate dynamically (IN MEMORY ONLY)
     
-    # Check if user is a member of the team at all
+    # 1. Check Team Membership (Owner/Admin override everything)
     team_member = TeamMember.objects.filter(team=project.team, user=user, is_active=True).first()
     if not team_member:
         return None
 
-    # Determine Permission Level
+    # Default level
     level = ProjectPermission.PermissionLevel.VIEW_ONLY
 
-    # A. Check Team Level Roles (Overrides everything)
+    # 2. Determine Level based on Hierarchy
     if team_member.role in [TeamMember.Role.OWNER, TeamMember.Role.ADMIN]:
         level = ProjectPermission.PermissionLevel.ADMIN
     else:
-        # B. Check Project Assignee Status
+        # Check Project Assignee Status (Real-time Source of Truth)
         assignee = ProjectAssignee.objects.filter(project=project, user=user).first()
         
         if assignee:
-            # Map Assignee Roles to Permission Levels
             if assignee.role == ProjectAssignee.AssigneeRole.LEAD:
-                level = ProjectPermission.PermissionLevel.EDIT_ALL
+                level = ProjectPermission.PermissionLevel.ADMIN # Leads act as Admins
             elif assignee.role == ProjectAssignee.AssigneeRole.MANAGER:
                 level = ProjectPermission.PermissionLevel.EDIT_ALL
-            else: 
-                # Contributors (Role 1) - Edit Basic Info
+            else:
                 level = ProjectPermission.PermissionLevel.EDIT_BASIC
-        
-        # C. Check Old ProjectMember model (backward compatibility)
-        elif ProjectMember.objects.filter(project=project, user=user).exists():
-            level = ProjectPermission.PermissionLevel.EDIT_BASIC
+        else:
+             # Fallback to DB Permission
+             db_perm = ProjectPermission.objects.filter(project=project, user=user).first()
+             if db_perm:
+                 return db_perm
+             
+             # Default for regular team members
+             level = ProjectPermission.PermissionLevel.VIEW_ONLY
 
-    # 4. Instantiate temporary object (DO NOT SAVE to DB)
-    # We create the object in memory so the serializer can read it
+    # 3. Construct Temporary Object
     temp_permission = ProjectPermission(project=project, user=user, level=level)
 
-    # 5. Manually set the boolean flags 
-    # (Because we aren't calling .save(), we must replicate the model's save logic here)
-    if level == ProjectPermission.PermissionLevel.VIEW_ONLY:
-        temp_permission.can_edit_name = False
-        temp_permission.can_edit_description = False
-        temp_permission.can_edit_dates = False
-        temp_permission.can_edit_status = False
-        temp_permission.can_assign_tasks = False
-        temp_permission.can_manage_members = False
-        temp_permission.can_transfer_project = False
-        temp_permission.can_delete_project = False
-
-    elif level == ProjectPermission.PermissionLevel.EDIT_BASIC:
+    # 4. Set Flags based on Level
+    if level == ProjectPermission.PermissionLevel.ADMIN:
         temp_permission.can_edit_name = True
         temp_permission.can_edit_description = True
         temp_permission.can_edit_dates = True
         temp_permission.can_edit_status = True
         temp_permission.can_assign_tasks = True
-        temp_permission.can_manage_members = False
-        temp_permission.can_transfer_project = False
-        temp_permission.can_delete_project = False
-
+        temp_permission.can_manage_members = True
+        temp_permission.can_transfer_project = True
+        temp_permission.can_delete_project = True
+        
     elif level == ProjectPermission.PermissionLevel.EDIT_ALL:
         temp_permission.can_edit_name = True
         temp_permission.can_edit_description = True
@@ -2180,20 +2142,28 @@ def get_user_project_permissions(user, project):
         temp_permission.can_manage_members = True
         temp_permission.can_transfer_project = False
         temp_permission.can_delete_project = False
-
-    elif level == ProjectPermission.PermissionLevel.ADMIN:
+        
+    elif level == ProjectPermission.PermissionLevel.EDIT_BASIC:
         temp_permission.can_edit_name = True
         temp_permission.can_edit_description = True
         temp_permission.can_edit_dates = True
         temp_permission.can_edit_status = True
         temp_permission.can_assign_tasks = True
-        temp_permission.can_manage_members = True
-        temp_permission.can_transfer_project = True
-        temp_permission.can_delete_project = True
+        temp_permission.can_manage_members = False
+        temp_permission.can_transfer_project = False
+        temp_permission.can_delete_project = False
+        
+    else: # VIEW_ONLY
+        temp_permission.can_edit_name = False
+        temp_permission.can_edit_description = False
+        temp_permission.can_edit_dates = False
+        temp_permission.can_edit_status = False
+        temp_permission.can_assign_tasks = False
+        temp_permission.can_manage_members = False
+        temp_permission.can_transfer_project = False
+        temp_permission.can_delete_project = False
 
     return temp_permission
-
-# views.py (Check if this exists at the bottom)
 
 @api_view(['POST'])
 def toggle_project_favorite_view(request, team_id, project_id):

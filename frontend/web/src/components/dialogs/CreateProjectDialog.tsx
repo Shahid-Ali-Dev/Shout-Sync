@@ -1,5 +1,5 @@
-// src/components/dialogs/CreateProjectDialog.tsx - OPTIMIZED VERSION
-import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+// src/components/dialogs/CreateProjectDialog.tsx
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   Dialog,
   DialogTitle,
@@ -28,50 +28,33 @@ import {
   Tab,
   Stack,
   Fade,
-  Grid,
-  Grow,
   AvatarGroup,
   Badge,
   LinearProgress,
-  InputAdornment,
-  List,
-  ListItem,
-  ListItemAvatar,
-  ListItemText,
-  ListItemSecondaryAction,
-  debounce,
-  ClickAwayListener,
-  Popper,
-  Autocomplete,
-  Skeleton,
+  Grow,
 } from '@mui/material';
 import {
   Folder as ProjectIcon,
   Close as CloseIcon,
   Groups as TeamsIcon,
   Rocket as RocketIcon,
-  Group as GroupsIcon,
-  Warning as WarningIcon,
-  PersonAdd as PersonAddIcon,
+  Groups as GroupsIcon,
   PersonRemove as PersonRemoveIcon,
   Star as StarIcon,
   AdminPanelSettings as AdminIcon,
   SupervisorAccount as ManagerIcon,
   HowToReg as ContributorIcon,
-  Search as SearchIcon,
-  FilterList as FilterIcon,
   ChevronRight as ChevronRightIcon,
-  AddCircle as AddCircleIcon,
   Workspaces as WorkspacesIcon,
-  Diversity3 as Diversity3Icon,
   EmojiPeople as EmojiPeopleIcon,
-  Clear as ClearIcon,
-  Check as CheckIcon,
+  Diversity3 as Diversity3Icon,
 } from '@mui/icons-material';
 import { projectAPI } from '../../shared/services/projectAPI';
 import { teamAPI } from '../../shared/services/teamAPI';
 import { useSelector } from 'react-redux';
 import { RootState } from '../../shared/store/store';
+// Import your separate component
+import TeamMemberSearch, { TeamMemberResult } from '../common/TeamMemberSearch'; 
 
 interface CreateProjectDialogProps {
   open: boolean;
@@ -92,17 +75,13 @@ interface User {
   email: string;
   first_name: string;
   last_name: string;
-  avatar?: string | null; 
-}
-
-interface TeamMember {
-  id: string;
-  user: User;
-  role: number;
+  avatar?: string | null;
+  last_active?: string;
 }
 
 interface TeamMemberUser extends User {
   teamRole: number;
+  last_active?: string;
 }
 
 interface Assignee {
@@ -147,6 +126,137 @@ const ASSIGNEE_ROLES = [
   },
 ];
 
+// Helper component for consistent rendering
+const AssigneeRow = ({ 
+  assignee, 
+  currentUserId, 
+  onRoleChange, 
+  onRemove, 
+  formatLastActive, 
+  isUserOnline 
+}: any) => {
+  const isMe = assignee.user.id === currentUserId;
+
+  return (
+    <Grow in={true} timeout={300}> 
+      <Paper 
+        sx={{ 
+          p: 2, 
+          borderRadius: 2, 
+          backgroundColor: 'white', 
+          border: '1px solid', 
+          borderColor: isMe ? 'primary.main' : 'divider', 
+          boxShadow: isMe ? '0 2px 8px rgba(79, 70, 229, 0.15)' : '0 1px 3px rgba(0, 0, 0, 0.08)',
+          transition: 'all 0.3s ease',
+          '&:hover': {
+            boxShadow: '0 4px 12px rgba(0, 0, 0, 0.12)',
+            transform: 'translateY(-1px)',
+          }
+        }}
+      >
+        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 2 }}>
+          {/* User Info */}
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flex: 1 }}>
+            <Box sx={{ position: 'relative', display: 'inline-flex' }}>
+              <Avatar 
+                src={assignee.user.avatar || undefined} 
+                sx={{ 
+                  width: 48, 
+                  height: 48, 
+                  border: isMe ? '2px solid #4f46e5' : 'none' 
+                }}
+              >
+                {assignee.user.first_name?.[0]}{assignee.user.last_name?.[0]}
+              </Avatar>
+              {assignee.user.last_active && isUserOnline(assignee.user.last_active) && (
+                <Box sx={{ 
+                  position: 'absolute', bottom: 0, right: 0, width: 14, height: 14, 
+                  backgroundColor: '#10B981', border: '2px solid white', borderRadius: '50%', 
+                  boxShadow: '0 2px 6px rgba(0, 0, 0, 0.3)', zIndex: 2 
+                }} />
+              )}
+            </Box>
+            <Box sx={{ flex: 1 }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
+                <Typography variant="subtitle1" fontWeight="600">
+                  {assignee.user.first_name} {assignee.user.last_name}
+                </Typography>
+                {isMe && (
+                  <Chip label="You" size="small" sx={{ backgroundColor: 'primary.50', color: 'primary.main', fontWeight: 500, height: 20 }} />
+                )}
+                {assignee.isLead && (
+                  <Tooltip title="Project Lead"><StarIcon sx={{ color: 'warning.main', fontSize: 18 }} /></Tooltip>
+                )}
+              </Box>
+              <Typography variant="caption" color="text.secondary">{assignee.user.email}</Typography>
+              {assignee.user.last_active && (
+                <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.5 }}>
+                  {isUserOnline(assignee.user.last_active) ? (
+                    <Box component="span" sx={{ color: 'success.main', fontWeight: 600 }}>Online</Box>
+                  ) : (
+                    `Last active: ${formatLastActive(assignee.user.last_active)}`
+                  )}
+                </Typography>
+              )}
+            </Box>
+          </Box>
+           
+          {/* Controls */}
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+            <FormControl size="small" sx={{ minWidth: 140 }}>
+              <Select
+                value={assignee.role}
+                onChange={(e) => onRoleChange(assignee.user.id, e.target.value)}
+                sx={{ borderRadius: 2, '& .MuiOutlinedInput-notchedOutline': { borderColor: '#e5e7eb' } }}
+                renderValue={(value) => {
+                  const role = ASSIGNEE_ROLES.find(r => r.value === value);
+                  return (
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                      {role?.icon}
+                      <Typography variant="body2" fontWeight="500">{role?.label}</Typography>
+                    </Box>
+                  );
+                }}
+              >
+                {ASSIGNEE_ROLES.map((role) => (
+                  <MenuItem key={role.value} value={role.value}>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, py: 0.5 }}>
+                      <Box sx={{ width: 32, height: 32, borderRadius: '50%', backgroundColor: `${role.badgeColor}15`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        {role.icon}
+                      </Box>
+                      <Box>
+                        <Typography variant="body2" fontWeight="500">{role.label}</Typography>
+                        <Typography variant="caption" color="text.secondary">{role.description}</Typography>
+                      </Box>
+                    </Box>
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+            
+            <Tooltip title="Remove member">
+              <span>
+                <IconButton 
+                  size="small" 
+                  onClick={() => onRemove(assignee.user.id)}
+                  disabled={false}
+                  sx={{ 
+                    color: 'error.main', 
+                    bgcolor: 'error.50', 
+                    '&:hover': { backgroundColor: 'error.100' } 
+                  }}
+                >
+                  <PersonRemoveIcon fontSize="small" />
+                </IconButton>
+              </span>
+            </Tooltip>
+          </Box>
+        </Box>
+      </Paper>
+    </Grow>
+  );
+};
+
 const CreateProjectDialog: React.FC<CreateProjectDialogProps> = ({
   open,
   onClose,
@@ -156,27 +266,19 @@ const CreateProjectDialog: React.FC<CreateProjectDialogProps> = ({
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
   const { user } = useSelector((state: RootState) => state.auth);
-  
+   
   const [loading, setLoading] = useState(false);
   const [teams, setTeams] = useState<Team[]>([]);
-  const [teamMembers, setTeamMembers] = useState<{[key: string]: TeamMember[]}>({});
   const [teamsLoading, setTeamsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [permissionError, setPermissionError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState(0);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [selectedRoleFilter, setSelectedRoleFilter] = useState<number | 'all'>('all');
   const [assignees, setAssignees] = useState<Assignee[]>([]);
   const [isAnimating, setIsAnimating] = useState(false);
-  
-  // New state for optimized loading
-  const [searchResults, setSearchResults] = useState<TeamMemberUser[]>([]);
-  const [searchLoading, setSearchLoading] = useState(false);
   const [totalMembers, setTotalMembers] = useState(0);
-  const [searchPage, setSearchPage] = useState(1);
-  const [hasMoreMembers, setHasMoreMembers] = useState(true);
-  const searchAnchorRef = useRef<HTMLDivElement>(null);
-  const [searchOpen, setSearchOpen] = useState(false);
+
+  // User role and permission state
+  const [userRole, setUserRole] = useState<'OWNER' | 'ADMIN' | 'MEMBER' | 'GUEST' | null>(null);
+  const [permissionError, setPermissionError] = useState<string | null>(null);
 
   // Set default dates
   const today = new Date().toISOString().split('T')[0];
@@ -193,147 +295,196 @@ const CreateProjectDialog: React.FC<CreateProjectDialogProps> = ({
     team: teamId || '',
   });
 
-const loadTeams = useCallback(async () => {
-  try {
-    setTeamsLoading(true);
-    const response = await teamAPI.getTeams();
-    const teamsData: Team[] = response.data;
-    setTeams(teamsData);
+  // Permission checks
+  const canEditProject = userRole === 'OWNER' || userRole === 'ADMIN' || userRole === 'MEMBER';
+  const canAddAssignees = userRole === 'OWNER' || userRole === 'ADMIN' || userRole === 'MEMBER';
+
+  // Get selected team for display
+  const selectedTeam = useMemo(() => {
+    return teams.find(team => team.id === projectData.team);
+  }, [teams, projectData.team]);
+
+  // Format last active function
+  const formatLastActive = (lastActive?: string): string => {
+    if (!lastActive || lastActive === 'null' || lastActive === 'undefined' || lastActive === '') {
+      return 'Never';
+    }
     
-    // Auto-select the team if teamId is provided
-    if (teamId && teamsData.length > 0) {
-      const targetTeam = teamsData.find(team => team.id === teamId);
-      if (targetTeam) {
-        setProjectData(prev => ({ ...prev, team: teamId }));
+    try {
+      let date: Date;
+      const parsedDate = new Date(lastActive);
+      
+      if (isNaN(parsedDate.getTime())) {
+        const timestamp = parseInt(lastActive, 10);
+        if (!isNaN(timestamp)) {
+          date = new Date(timestamp);
+        } else {
+          const cleaned = lastActive
+            .replace('Z', '')
+            .replace('+00:00', '')
+            .replace('T', ' ')
+            .trim();
+          date = new Date(cleaned);
+        }
         
-        // OPTIMIZED: Load team member count only
-        try {
-          const membersResponse = await teamAPI.getTeamMembersOptimized(teamId, 1, 1);
-          setTotalMembers(membersResponse.data.total || 0);
-        } catch (error) {
-          console.error('Failed to load team members count:', error);
-          setTotalMembers(0);
+        if (isNaN(date.getTime())) {
+          return 'Never';
+        }
+      } else {
+        date = parsedDate;
+      }
+      
+      const now = new Date();
+      const diffMs = now.getTime() - date.getTime();
+      const diffMins = Math.floor(diffMs / 1000 / 60);
+      const diffHours = Math.floor(diffMins / 60);
+      const diffDays = Math.floor(diffHours / 24);
+      
+      if (diffMins < 5) return 'Just now';
+      if (diffMins < 60) return `${diffMins}m ago`;
+      if (diffHours < 24) return `${diffHours}h ago`;
+      if (diffDays < 7) return `${diffDays}d ago`;
+      if (diffDays < 30) return `${Math.floor(diffDays / 7)}w ago`;
+      if (diffDays < 365) return `${Math.floor(diffDays / 30)}mo ago`;
+      
+      return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    } catch {
+      return 'Unknown';
+    }
+  };
+
+  const isUserOnline = (lastActive?: string): boolean => {
+    if (!lastActive) return false;
+    
+    try {
+      const date = new Date(lastActive);
+      if (isNaN(date.getTime())) return false;
+      
+      const now = new Date();
+      const diffMins = Math.floor((now.getTime() - date.getTime()) / 1000 / 60);
+      return diffMins < 5;
+    } catch {
+      return false;
+    }
+  };
+
+const loadTeams = useCallback(async () => {
+    try {
+      setTeamsLoading(true);
+      const response = await teamAPI.getTeams();
+      const teamsData: Team[] = response.data;
+      setTeams(teamsData);
+      
+      if (teamId && teamsData.length > 0) {
+        const targetTeam = teamsData.find(team => team.id === teamId);
+        if (targetTeam) {
+          setProjectData(prev => ({ ...prev, team: teamId }));
+          
+          if (user) {
+            const currentUser: User = {
+              id: user.id,
+              email: user.email,
+              first_name: user.first_name,
+              last_name: user.last_name,
+              avatar: user.avatar,
+              last_active: (user as any).last_active || new Date().toISOString() 
+            };
+            
+            setAssignees([{
+              id: user.id,
+              user: currentUser,
+              role: 3, // Lead
+              isLead: true
+            }]);
+          }
+          
+          // Load member count and permissions
+          try {
+            const membersResponse = await teamAPI.getTeamMembersOptimized(teamId, 1, 1);
+            setTotalMembers(membersResponse.data.total || 0);
+
+            const userMember = membersResponse.data.results?.find((m: any) => 
+                (m.user?.id === user?.id) || (m.id === user?.id)
+            );
+            
+            if (userMember) {
+                const roleMap: Record<number, any> = { 1: 'OWNER', 2: 'ADMIN', 3: 'MEMBER', 4: 'GUEST' };
+                setUserRole(roleMap[userMember.role] || 'GUEST');
+            } else {
+                setUserRole('MEMBER'); 
+            }
+
+          } catch (error) {
+            console.error(error);
+            setUserRole('MEMBER');
+          }
         }
       }
+    } catch (error) {
+      console.error('Failed to load teams:', error);
+      setError('Failed to load teams.');
+    } finally {
+      setTeamsLoading(false);
     }
-  } catch (error) {
-    console.error('Failed to load teams:', error);
-    setError('Failed to load teams. Please try again.');
-  } finally {
-    setTeamsLoading(false);
-  }
-}, [teamId]);
+  }, [teamId, user]);
 
-  // Optimized search function with debouncing
-const searchMembers = useCallback(async (query: string, page: number = 1) => {
-  if (!projectData.team) return;
-  
-  try {
-    setSearchLoading(true);
-    const response = await teamAPI.searchTeamMembers(
-      projectData.team, 
-      query, 
-      page,
-      selectedRoleFilter !== 'all' ? selectedRoleFilter : undefined
-    );
-    
-    const data = response.data.results || response.data;
-    const total = response.data.total || data.length;
-    
-    setTotalMembers(total);
-    setHasMoreMembers(response.data.has_next || false);
-    
-    // Format members
-    const formattedMembers = data.map((member: any) => ({
-      ...member.user,
-      teamRole: member.role,
-    }));
-    
-    if (page === 1) {
-      setSearchResults(formattedMembers);
-    } else {
-      setSearchResults(prev => [...prev, ...formattedMembers]);
-    }
-    setSearchPage(page);
-  } catch (error) {
-    console.error('Search failed:', error);
-  } finally {
-    setSearchLoading(false);
-  }
-}, [projectData.team, selectedRoleFilter]);
-
-  // Debounced search handler
-  const debouncedSearch = useMemo(
-    () => debounce((query: string) => {
-      searchMembers(query, 1);
-    }, 300),
-    [searchMembers]
-  );
-
-  // Load teams when dialog opens
+  // Initialize when dialog opens
   useEffect(() => {
     if (open) {
       loadTeams();
       setAssignees([]);
       setActiveTab(0);
-      setSearchQuery('');
-      setSelectedRoleFilter('all');
-      setSearchResults([]);
-      setSearchPage(1);
-      setSearchOpen(false);
+      setError(null);
+      setPermissionError(null);
     }
   }, [open, loadTeams]);
 
-  // Auto-add creator as lead
-  useEffect(() => {
-    if (open && user && projectData.team && assignees.length === 0) {
-      const creatorMember = searchResults.find(m => m.id === user.id);
-      if (creatorMember) {
-        // Add creator as Lead with animation
-        setTimeout(() => {
-          handleAddAssignee(user, 3, true);
-        }, 300);
-      }
-    }
-  }, [open, user, projectData.team, assignees.length, searchResults]);
+  // Auto-add creator as lead when team is selected is handled in loadTeams or handleTeamChange for main user
+  // (Search related effects removed)
 
-  // Handle search query changes
-  useEffect(() => {
-    if (searchQuery.trim() === '') {
-      setSearchResults([]);
-      setSearchOpen(false);
-      return;
-    }
+const handleTeamChange = async (newTeamId: string) => {
+    setProjectData(prev => ({ ...prev, team: newTeamId }));
     
-    if (projectData.team) {
-      setSearchOpen(true);
-      debouncedSearch(searchQuery);
-    }
-  }, [searchQuery, projectData.team, debouncedSearch]);
-
-  const handleTeamChange = async (teamId: string) => {
-    setProjectData(prev => ({ ...prev, team: teamId }));
-    setAssignees([]);
-    setSearchQuery('');
-    setSearchResults([]);
-    setSearchOpen(false);
-    
-    // Load team member count
-    try {
-      const membersResponse = await teamAPI.getTeamMembersOptimized(teamId, 1, 1);
-      setTotalMembers(membersResponse.data.total || 0);
-    } catch (error) {
-      console.error('Failed to load team members count:', error);
-      setTotalMembers(0);
-    }
-    
-    // Auto-add creator as Lead
     if (user) {
-      setTimeout(() => {
-        if (user) {
-          handleAddAssignee(user, 3, true);
-        }
-      }, 300);
+      const currentUser: User = {
+        id: user.id,
+        email: user.email,
+        first_name: user.first_name,
+        last_name: user.last_name,
+        avatar: user.avatar,
+        last_active: (user as any).last_active || new Date().toISOString() 
+      };
+      
+      setAssignees([{
+        id: user.id,
+        user: currentUser,
+        role: 3, // Lead
+        isLead: true
+      }]);
+    } else {
+      setAssignees([]);
+    }
+
+    // Load new team data
+    try {
+      const membersResponse = await teamAPI.getTeamMembersOptimized(newTeamId, 1, 1);
+      setTotalMembers(membersResponse.data.total || 0);
+      
+      // Check permissions for the new team
+      const userMember = membersResponse.data.results?.find((m: any) => 
+        (m.user?.id === user?.id) || (m.id === user?.id)
+      );
+      
+      if (userMember) {
+        const roleMap: Record<number, any> = { 1: 'OWNER', 2: 'ADMIN', 3: 'MEMBER', 4: 'GUEST' };
+        setUserRole(roleMap[userMember.role] || 'GUEST');
+      } else {
+        setUserRole('GUEST'); 
+      }
+    } catch (error) {
+      console.error('Failed to load team data:', error);
+      setTotalMembers(0);
+      setUserRole('GUEST');
     }
   };
 
@@ -344,41 +495,68 @@ const searchMembers = useCallback(async (query: string, page: number = 1) => {
     }));
   };
 
-  const handleAddAssignee = (user: User, role: number = 1, isCreator: boolean = false) => {
-    // Check if already added
-    if (assignees.some(assignee => assignee.user.id === user.id)) {
+  const handleAddAssignee = (member: TeamMemberResult | TeamMemberUser, role: number = 1) => {
+    // Check permissions
+    if (!canAddAssignees) {
+      setError('You do not have permission to add assignees');
       return;
     }
 
+    // Check if already added
+    if (assignees.some(assignee => assignee.user.id === member.id)) {
+      return;
+    }
+
+    const userData: User = {
+      id: member.id,
+      email: member.email,
+      first_name: member.first_name,
+      last_name: member.last_name,
+      avatar: member.avatar,
+      last_active: member.last_active,
+    };
+
     const newAssignee: Assignee = {
-      id: user.id,
-      user,
+      id: member.id,
+      user: userData,
       role,
       isLead: role === 3
     };
-    
+     
     setIsAnimating(true);
     setAssignees(prev => [...prev, newAssignee]);
-    setSearchOpen(false);
-    setSearchQuery('');
+    // Search state resets removed as they are internal to the new component now
     
     setTimeout(() => setIsAnimating(false), 300);
   };
 
-  const handleRemoveAssignee = (userId: string, isCreator: boolean = false) => {
-    // Don't allow removing creator if they're the only assignee
-    if (isCreator && assignees.length === 1) {
-      setError('You cannot remove yourself as the only assignee');
-      return;
-    }
-    
-    setIsAnimating(true);
-    setAssignees(prev => prev.filter(assignee => assignee.user.id !== userId));
-    
-    setTimeout(() => setIsAnimating(false), 300);
-  };
+  const handleRemoveAssignee = (userId: string) => {
+      // 1. Prevent empty list
+      if (assignees.length <= 1) {
+        setError('A project must have at least one member.');
+        return;
+      }
+      
+      // 2. Check Role constraints for self-removal
+      if (userId === user?.id) {
+        const isPrivileged = userRole === 'OWNER' || userRole === 'ADMIN';
+        if (!isPrivileged) {
+            // If not privileged, you cannot remove yourself
+            return;
+        }
+      }
+      
+      setIsAnimating(true);
+      setAssignees(prev => prev.filter(a => a.user.id !== userId));
+      setTimeout(() => setIsAnimating(false), 300);
+    };
 
   const handleUpdateAssigneeRole = (userId: string, newRole: number) => {
+    if (!canAddAssignees) {
+      setError('You do not have permission to update assignee roles');
+      return;
+    }
+     
     setAssignees(prev => 
       prev.map(assignee => 
         assignee.user.id === userId 
@@ -386,47 +564,6 @@ const searchMembers = useCallback(async (query: string, page: number = 1) => {
           : assignee
       )
     );
-  };
-
-  // Get available team members from search results (excluding already selected)
-  const getAvailableMembers = useMemo(() => {
-    return searchResults.filter(member => 
-      !assignees.some(selected => selected.user.id === member.id)
-    );
-  }, [searchResults, assignees]);
-
-  // Get user role for selected team
-  const selectedTeamMember = useMemo(() => {
-    return searchResults.find(m => m.id === user?.id);
-  }, [searchResults, user]);
-
-  const userRole = selectedTeamMember?.teamRole;
-  const userRoleName = userRole === 1 ? 'Owner' : 
-                      userRole === 2 ? 'Admin' : 
-                      userRole === 3 ? 'Member' : 
-                      userRole === 4 ? 'Guest' : 'Unknown';
-
-  // Check if user can add assignees (Owners/Admins only)
-  const canAddAssignees = userRole && userRole <= 2;
-
-  // Get the selected team name for display
-  const selectedTeam = teams.find(team => team.id === projectData.team);
-
-  const canCreateProject = (): boolean => {
-    if (!projectData.name.trim()) return false;
-    if (!projectData.team) return false;
-    if (permissionError) return false;
-
-    if (projectData.start_date && projectData.end_date) {
-      const startDate = new Date(projectData.start_date);
-      const endDate = new Date(projectData.end_date);
-      
-      if (endDate < startDate) {
-        return false;
-      }
-    }
-
-    return true;
   };
 
   const validateForm = (): boolean => {
@@ -449,157 +586,98 @@ const searchMembers = useCallback(async (query: string, page: number = 1) => {
       }
     }
 
-    if (permissionError) {
-      return false;
-    }
-
     setError(null);
     return true;
   };
 
-const handleCreateProject = async () => {
-  if (!validateForm()) return;
+  const handleCreateProject = async () => {
+    if (!validateForm()) return;
 
-  try {
-    setLoading(true);
-    setError(null);
+    try {
+      setLoading(true);
+      setError(null);
 
-    const assigneeData = {
-      assignee_ids: [] as string[],
-      assignee_roles: [] as number[],
-    };
+      const assigneeData = {
+        assignee_ids: [] as string[],
+        assignee_roles: [] as number[],
+      };
 
-    // Always include creator as assignee
-    if (user) {
-      assigneeData.assignee_ids.push(user.id);
-      assigneeData.assignee_roles.push(3); // Default to Lead
-    }
+      // Always include creator as lead if they're not already added
+      if (user && !assignees.some(a => a.user.id === user.id)) {
+        assigneeData.assignee_ids.push(user.id);
+        assigneeData.assignee_roles.push(3);
+      }
 
-    // Add other assignees if user has permission
-    if (canAddAssignees) {
-      const otherAssignees = assignees.filter(a => a.user.id !== user?.id);
-      otherAssignees.forEach(assignee => {
+      // Add other assignees
+      assignees.forEach(assignee => {
         assigneeData.assignee_ids.push(assignee.user.id);
         assigneeData.assignee_roles.push(assignee.role);
       });
-    }
 
-    const formattedData = {
-      name: projectData.name.trim(),
-      description: projectData.description.trim(),
-      start_date: new Date(projectData.start_date).toISOString(),
-      end_date: new Date(projectData.end_date).toISOString(),
-      status: projectData.status,
-      team: projectData.team,
-      ...assigneeData
-    };
+      const formattedData = {
+        name: projectData.name.trim(),
+        description: projectData.description.trim(),
+        start_date: new Date(projectData.start_date).toISOString(),
+        end_date: new Date(projectData.end_date).toISOString(),
+        status: projectData.status,
+        team: projectData.team,
+        ...assigneeData
+      };
 
-    // Use optimized endpoint
     const response = await projectAPI.createProjectOptimized(projectData.team, formattedData);
 
-    if (onProjectCreated) {
-      onProjectCreated(response.data);
-    }
+      if (onProjectCreated) {
+        const createdProject = response.data.project || response.data;
+        onProjectCreated(createdProject);
+      }
 
-    handleClose();
-    
-  } catch (error: any) {
-    console.error('Project creation failed:', error);
-    
-    let message = 'Failed to create project';
-    if (error.response?.data?.error) {
-      message = error.response.data.error;
-    } else if (error.response?.data?.detail) {
-      message = error.response.data.detail;
-    } else if (error.response?.status === 403) {
-      message = 'You do not have permission to create projects. Please contact your team admin.';
+      handleClose();
+      
+    } catch (error: any) {
+      console.error('Project creation failed:', error);
+      
+      let message = 'Failed to create project';
+      if (error.response?.data?.error) {
+        message = error.response.data.error;
+      } else if (error.response?.data?.detail) {
+        message = error.response.data.detail;
+      } else if (error.response?.status === 403) {
+        message = 'You do not have permission to create projects. Please contact your team admin.';
+      }
+      
+      setError(message);
+    } finally {
+      setLoading(false);
     }
-    
-    setError(message);
-  } finally {
-    setLoading(false);
-  }
-};
+  };
 
-  const handleClose = () => {
-    setProjectData({
-      name: '',
-      description: '',
-      start_date: today,
-      end_date: defaultEndDateString,
-      status: 1,
-      team: teamId || '',
-    });
-    setAssignees([]);
-    setError(null);
-    setPermissionError(null);
-    setActiveTab(0);
-    setSearchQuery('');
-    setSelectedRoleFilter('all');
-    setIsAnimating(false);
-    setSearchResults([]);
-    setSearchOpen(false);
+const handleClose = () => {
+    // 1. Close the dialog visually first
     onClose();
+
+    // 2. Wait for the exit animation (300ms) before resetting state
+    setTimeout(() => {
+      setProjectData({
+        name: '',
+        description: '',
+        start_date: today,
+        end_date: defaultEndDateString,
+        status: 1,
+        team: teamId || '',
+      });
+      setAssignees([]);
+      setError(null);
+      setPermissionError(null);
+      setActiveTab(0);
+      setIsAnimating(false);
+      setUserRole(null);
+    }, 300); 
   };
 
-  const loadMoreMembers = () => {
-    if (hasMoreMembers && !searchLoading) {
-      searchMembers(searchQuery, searchPage + 1);
-    }
-  };
-
-  const RoleBadge = ({ role, size = 'small' }: { role: number, size?: 'small' | 'medium' }) => {
-    const roleConfig = ASSIGNEE_ROLES.find(r => r.value === role) || ASSIGNEE_ROLES[0];
-    
-    return (
-      <Chip
-        icon={roleConfig.icon}
-        label={roleConfig.label}
-        size={size}
-        sx={{
-          backgroundColor: `${roleConfig.badgeColor}15`,
-          color: roleConfig.badgeColor,
-          border: `1px solid ${roleConfig.badgeColor}30`,
-          fontWeight: 600,
-          '& .MuiChip-icon': {
-            color: roleConfig.badgeColor,
-          }
-        }}
-      />
-    );
-  };
-
-  const TeamRoleBadge = ({ role }: { role: number }) => {
-    const roleNames: Record<number, string> = {
-      1: 'Owner',
-      2: 'Admin',
-      3: 'Member',
-      4: 'Guest',
-    };
-    
-    const colors: Record<number, string> = {
-      1: '#EF4444',
-      2: '#3B82F6',
-      3: '#10B981',
-      4: '#6B7280',
-    };
-    
-    const color = colors[role] || colors[3];
-    
-    return (
-      <Chip
-        label={roleNames[role] || 'Member'}
-        size="small"
-        sx={{
-          backgroundColor: `${color}15`,
-          color: color,
-          border: `1px solid ${color}30`,
-          fontWeight: 500,
-          fontSize: '0.7rem',
-        }}
-      />
-    );
-  };
+  // User role display name
+  const userRoleName = userRole === 'OWNER' ? 'Owner' : 
+                       userRole === 'ADMIN' ? 'Admin' : 
+                       userRole === 'MEMBER' ? 'Member' : 'Guest';
 
   return (
     <Dialog 
@@ -662,7 +740,7 @@ const handleCreateProject = async () => {
                 {' • '}
                 <Box component="span" sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5 }}>
                   <EmojiPeopleIcon sx={{ fontSize: 12 }} />
-                  {totalMembers} members
+                  {userRole ? `Your role: ${userRoleName}` : `${totalMembers} members`}
                 </Box>
               </Typography>
             )}
@@ -684,6 +762,24 @@ const handleCreateProject = async () => {
           <CloseIcon />
         </Button>
       </DialogTitle>
+
+      {/* Permission Alert */}
+      {userRole === 'GUEST' && (
+        <Alert 
+          severity="warning" 
+          sx={{ 
+            mx: 3, 
+            mt: 2,
+            borderRadius: 2,
+            boxShadow: '0 2px 8px rgba(245, 158, 11, 0.15)',
+          }}
+          onClose={() => setPermissionError(null)}
+        >
+          <Typography variant="body2">
+            You have <strong>Guest</strong> permissions and cannot create projects. Please contact a team admin.
+          </Typography>
+        </Alert>
+      )}
 
       {error && (
         <Alert 
@@ -711,7 +807,9 @@ const handleCreateProject = async () => {
         }}>
           <Tabs 
             value={activeTab} 
-            onChange={(e, newValue) => setActiveTab(newValue)}
+            onChange={(e, newValue) => {
+              setActiveTab(newValue);
+            }}
             sx={{ 
               px: 3,
               minHeight: 64,
@@ -740,6 +838,7 @@ const handleCreateProject = async () => {
                   Basic Info
                 </Box>
               }
+              disabled={!canEditProject}
             />
             <Tab 
               label={
@@ -762,7 +861,7 @@ const handleCreateProject = async () => {
                   )}
                 </Box>
               }
-              disabled={!projectData.team}
+              disabled={!projectData.team || !canAddAssignees}
             />
           </Tabs>
         </Box>
@@ -770,23 +869,24 @@ const handleCreateProject = async () => {
         <Box sx={{ p: 4 }}>
           {activeTab === 0 ? (
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+              {/* Team Selection */}
               {!teamId || teams.length > 1 ? (
                 <FormControl fullWidth required error={!projectData.team && teams.length > 0}>
                   <InputLabel>Select Team</InputLabel>
-                  <Select
-                    value={projectData.team}
-                    label="Select Team"
-                    onChange={(e) => handleTeamChange(e.target.value)}
-                    disabled={teamsLoading}
-                    sx={{ 
-                      borderRadius: 2,
-                      '& .MuiOutlinedInput-notchedOutline': {
-                        borderColor: '#e5e7eb',
-                      },
-                      '&:hover .MuiOutlinedInput-notchedOutline': {
-                        borderColor: '#d1d5db',
-                      }
-                    }}
+                    <Select
+                      value={projectData.team}
+                      label="Select Team"
+                      onChange={(e) => handleTeamChange(e.target.value)}
+                      disabled={teamsLoading}
+                      sx={{ 
+                        borderRadius: 2,
+                        '& .MuiOutlinedInput-notchedOutline': {
+                          borderColor: '#e5e7eb',
+                        },
+                        '&:hover .MuiOutlinedInput-notchedOutline': {
+                          borderColor: '#d1d5db',
+                        }
+                      }}
                     renderValue={(value) => {
                       const team = teams.find(t => t.id === value);
                       return (
@@ -794,7 +894,7 @@ const handleCreateProject = async () => {
                           <TeamsIcon sx={{ color: 'primary.main' }} />
                           <Box>
                             <Typography variant="body2" fontWeight="600">
-                              {team?.name}
+                              {team?.name || 'Select Team'}
                             </Typography>
                             <Typography variant="caption" color="text.secondary">
                               {team?.member_count} members
@@ -846,6 +946,7 @@ const handleCreateProject = async () => {
                 </Paper>
               )}
 
+              {/* Project Name */}
               <TextField
                 label="Project Name"
                 required
@@ -863,10 +964,11 @@ const handleCreateProject = async () => {
                     }
                   } 
                 }}
-                disabled={!projectData.team}
+                disabled={!canEditProject || !projectData.team}
                 autoFocus
               />
 
+              {/* Project Description */}
               <TextField
                 label="Description"
                 multiline
@@ -885,9 +987,10 @@ const handleCreateProject = async () => {
                     }
                   } 
                 }}
-                disabled={!projectData.team}
+                disabled={!canEditProject || !projectData.team}
               />
 
+              {/* Date Fields */}
               <Box sx={{ display: 'flex', gap: 2, flexDirection: isMobile ? 'column' : 'row' }}>
                 <TextField
                   label="Start Date"
@@ -906,7 +1009,7 @@ const handleCreateProject = async () => {
                       }
                     } 
                   }}
-                  disabled={!projectData.team}
+                  disabled={!canEditProject || !projectData.team}
                 />
                 <TextField
                   label="End Date"
@@ -925,10 +1028,11 @@ const handleCreateProject = async () => {
                       }
                     } 
                   }}
-                  disabled={!projectData.team}
+                  disabled={!canEditProject || !projectData.team}
                 />
               </Box>
 
+              {/* Status Selection */}
               <FormControl fullWidth>
                 <InputLabel>Initial Status</InputLabel>
                 <Select
@@ -944,7 +1048,7 @@ const handleCreateProject = async () => {
                       borderColor: '#d1d5db',
                     }
                   }}
-                  disabled={!projectData.team}
+                  disabled={!canEditProject || !projectData.team}
                   renderValue={(value) => {
                     const status = PROJECT_STATUS_OPTIONS.find(opt => opt.value === value);
                     return (
@@ -954,9 +1058,9 @@ const handleCreateProject = async () => {
                           height: 8, 
                           borderRadius: '50%',
                           backgroundColor: status?.color === 'success' ? '#10B981' :
-                                         status?.color === 'warning' ? '#F59E0B' :
-                                         status?.color === 'error' ? '#EF4444' :
-                                         status?.color === 'info' ? '#3B82F6' : '#6B7280',
+                                           status?.color === 'warning' ? '#F59E0B' :
+                                           status?.color === 'error' ? '#EF4444' :
+                                           status?.color === 'info' ? '#3B82F6' : '#6B7280',
                         }} />
                         <Typography variant="body2" fontWeight="600">
                           {status?.label}
@@ -993,6 +1097,7 @@ const handleCreateProject = async () => {
               </FormControl>
             </Box>
           ) : (
+            /* Team Members Tab */
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
               <Box sx={{ 
                 display: 'flex', 
@@ -1006,7 +1111,9 @@ const handleCreateProject = async () => {
                     Team Members
                   </Typography>
                   <Typography variant="body2" color="text.secondary">
-                    Add team members and assign their roles
+                    {canAddAssignees 
+                      ? 'Add team members and assign their roles'
+                      : 'Add team members to the project'}
                   </Typography>
                 </Box>
                 
@@ -1039,6 +1146,7 @@ const handleCreateProject = async () => {
                 </Box>
               </Box>
 
+              {/* Selected Members */}
               <Paper 
                 sx={{ 
                   p: 3, 
@@ -1070,143 +1178,16 @@ const handleCreateProject = async () => {
                   </Box>
                 ) : (
                   <Stack spacing={2}>
-                    {assignees.map((assignee, index) => (
-                      <Grow in={true} timeout={(index + 1) * 100} key={assignee.user.id}>
-                        <Paper 
-                          sx={{ 
-                            p: 2, 
-                            borderRadius: 2,
-                            backgroundColor: 'white',
-                            border: '1px solid',
-                            borderColor: assignee.user.id === user?.id ? 'primary.main' : 'divider',
-                            boxShadow: assignee.user.id === user?.id 
-                              ? '0 2px 8px rgba(79, 70, 229, 0.15)' 
-                              : '0 1px 3px rgba(0, 0, 0, 0.08)',
-                            transition: 'all 0.3s ease',
-                            '&:hover': {
-                              boxShadow: '0 4px 12px rgba(0, 0, 0, 0.12)',
-                              transform: 'translateY(-1px)',
-                            }
-                          }}
-                        >
-                          <Box sx={{ 
-                            display: 'flex', 
-                            alignItems: 'center', 
-                            justifyContent: 'space-between',
-                            gap: 2,
-                          }}>
-                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flex: 1 }}>
-                              <Avatar 
-                                src={assignee.user.avatar || undefined}
-                                sx={{ 
-                                  width: 48, 
-                                  height: 48,
-                                  border: assignee.user.id === user?.id ? '2px solid #4f46e5' : 'none',
-                                }}
-                              >
-                                {assignee.user.first_name?.[0]}{assignee.user.last_name?.[0]}
-                              </Avatar>
-                              <Box sx={{ flex: 1 }}>
-                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
-                                  <Typography variant="subtitle1" fontWeight="600">
-                                    {assignee.user.first_name} {assignee.user.last_name}
-                                  </Typography>
-                                  {assignee.user.id === user?.id && (
-                                    <Chip 
-                                      label="You" 
-                                      size="small" 
-                                      sx={{ 
-                                        backgroundColor: 'primary.50',
-                                        color: 'primary.main',
-                                        fontWeight: 500,
-                                        height: 20,
-                                      }} 
-                                    />
-                                  )}
-                                  {assignee.isLead && (
-                                    <Tooltip title="Project Lead">
-                                      <StarIcon sx={{ color: 'warning.main', fontSize: 18 }} />
-                                    </Tooltip>
-                                  )}
-                                </Box>
-                                <Typography variant="caption" color="text.secondary">
-                                  {assignee.user.email}
-                                </Typography>
-                              </Box>
-                            </Box>
-                            
-                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                              <FormControl size="small" sx={{ minWidth: 140 }}>
-                                <Select
-                                  value={assignee.role}
-                                  onChange={(e) => handleUpdateAssigneeRole(assignee.user.id, e.target.value as number)}
-                                  sx={{ 
-                                    borderRadius: 2,
-                                    '& .MuiOutlinedInput-notchedOutline': {
-                                      borderColor: '#e5e7eb',
-                                    }
-                                  }}
-                                  renderValue={(value) => {
-                                    const role = ASSIGNEE_ROLES.find(r => r.value === value);
-                                    return (
-                                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                        {role?.icon}
-                                        <Typography variant="body2" fontWeight="500">
-                                          {role?.label}
-                                        </Typography>
-                                      </Box>
-                                    );
-                                  }}
-                                >
-                                  {ASSIGNEE_ROLES.map((role) => (
-                                    <MenuItem key={role.value} value={role.value}>
-                                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, py: 0.5 }}>
-                                        <Box sx={{ 
-                                          width: 32, 
-                                          height: 32, 
-                                          borderRadius: '50%',
-                                          backgroundColor: `${role.badgeColor}15`,
-                                          display: 'flex',
-                                          alignItems: 'center',
-                                          justifyContent: 'center',
-                                        }}>
-                                          {role.icon}
-                                        </Box>
-                                        <Box>
-                                          <Typography variant="body2" fontWeight="500">
-                                            {role.label}
-                                          </Typography>
-                                          <Typography variant="caption" color="text.secondary">
-                                            {role.description}
-                                          </Typography>
-                                        </Box>
-                                      </Box>
-                                    </MenuItem>
-                                  ))}
-                                </Select>
-                              </FormControl>
-                              
-                              {assignee.user.id !== user?.id && (
-                                <Tooltip title="Remove member">
-                                  <IconButton 
-                                    size="small" 
-                                    onClick={() => handleRemoveAssignee(assignee.user.id, assignee.user.id === user?.id)}
-                                    sx={{ 
-                                      color: 'error.main',
-                                      backgroundColor: 'error.50',
-                                      '&:hover': {
-                                        backgroundColor: 'error.100',
-                                      }
-                                    }}
-                                  >
-                                    <PersonRemoveIcon fontSize="small" />
-                                  </IconButton>
-                                </Tooltip>
-                              )}
-                            </Box>
-                          </Box>
-                        </Paper>
-                      </Grow>
+                    {assignees.map((assignee) => (
+                      <AssigneeRow
+                        key={assignee.user.id}
+                        assignee={assignee}
+                        currentUserId={user?.id}
+                        onRoleChange={handleUpdateAssigneeRole}
+                        onRemove={handleRemoveAssignee}
+                        formatLastActive={formatLastActive}
+                        isUserOnline={isUserOnline}
+                      />
                     ))}
                   </Stack>
                 )}
@@ -1224,160 +1205,21 @@ const handleCreateProject = async () => {
                     <Paper sx={{ 
                       p: 2, 
                       mb: 3, 
-                      borderRadius: 2,
-                      backgroundColor: 'white',
-                      border: '1px solid',
+                      borderRadius: 2, 
+                      backgroundColor: 'white', 
+                      border: '1px solid', 
                       borderColor: 'divider',
                       boxShadow: '0 2px 8px rgba(0, 0, 0, 0.04)',
                     }}>
-                      <Box sx={{ display: 'flex', gap: 2, flexDirection: isMobile ? 'column' : 'row' }}>
-                        <Box sx={{ flex: 1, position: 'relative' }} ref={searchAnchorRef}>
-                          <TextField
-                            fullWidth
-                            placeholder="Search team members..."
-                            value={searchQuery}
-                            onChange={(e) => setSearchQuery(e.target.value)}
-                            sx={{
-                              '& .MuiOutlinedInput-root': {
-                                borderRadius: 2,
-                                backgroundColor: '#f8fafc',
-                              }
-                            }}
-                            InputProps={{
-                              startAdornment: (
-                                <InputAdornment position="start">
-                                  <SearchIcon sx={{ color: 'text.secondary', mr: 1 }} />
-                                </InputAdornment>
-                              ),
-                              endAdornment: searchQuery && (
-                                <InputAdornment position="end">
-                                  <IconButton 
-                                    size="small" 
-                                    onClick={() => setSearchQuery('')}
-                                  >
-                                    <ClearIcon fontSize="small" />
-                                  </IconButton>
-                                </InputAdornment>
-                              ),
-                            }}
-                          />
-                          
-                          <ClickAwayListener onClickAway={() => setSearchOpen(false)}>
-                            <Popper
-                              open={searchOpen}
-                              anchorEl={searchAnchorRef.current}
-                              placement="bottom-start"
-                              style={{ 
-                                zIndex: 1300, 
-                                width: searchAnchorRef.current?.clientWidth,
-                                maxHeight: 400,
-                                overflowY: 'auto'
-                              }}
-                            >
-                              <Paper sx={{ 
-                                mt: 1, 
-                                borderRadius: 2,
-                                boxShadow: '0 8px 30px rgba(0, 0, 0, 0.15)',
-                                border: '1px solid',
-                                borderColor: 'divider',
-                              }}>
-                                {searchLoading ? (
-                                  <Box sx={{ p: 2 }}>
-                                    {[1, 2, 3].map((i) => (
-                                      <Box key={i} sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}>
-                                        <Skeleton variant="circular" width={40} height={40} />
-                                        <Box sx={{ flex: 1 }}>
-                                          <Skeleton variant="text" width="60%" />
-                                          <Skeleton variant="text" width="40%" />
-                                        </Box>
-                                      </Box>
-                                    ))}
-                                  </Box>
-                                ) : getAvailableMembers.length === 0 ? (
-                                  <Box sx={{ p: 3, textAlign: 'center' }}>
-                                    <Typography color="text.secondary">
-                                      {searchQuery ? 'No members found' : 'Type to search team members'}
-                                    </Typography>
-                                  </Box>
-                                ) : (
-                                  <>
-                                    <List dense>
-                                      {getAvailableMembers.map((member) => (
-                                        <ListItem 
-                                          key={member.id}
-                                          button
-                                          onClick={() => handleAddAssignee(member)}
-                                          sx={{
-                                            '&:hover': {
-                                              backgroundColor: 'action.hover',
-                                            }
-                                          }}
-                                        >
-                                          <ListItemAvatar>
-                                            <Avatar src={member.avatar || undefined}>
-                                              {member.first_name?.[0]}{member.last_name?.[0]}
-                                            </Avatar>
-                                          </ListItemAvatar>
-                                          <ListItemText
-                                            primary={`${member.first_name} ${member.last_name}`}
-                                            secondary={member.email}
-                                          />
-                                          <ListItemSecondaryAction>
-                                            <TeamRoleBadge role={member.teamRole} />
-                                          </ListItemSecondaryAction>
-                                        </ListItem>
-                                      ))}
-                                    </List>
-                                    {hasMoreMembers && (
-                                      <Box sx={{ p: 2, textAlign: 'center' }}>
-                                        <Button 
-                                          size="small" 
-                                          onClick={loadMoreMembers}
-                                          disabled={searchLoading}
-                                        >
-                                          Load More
-                                        </Button>
-                                      </Box>
-                                    )}
-                                  </>
-                                )}
-                              </Paper>
-                            </Popper>
-                          </ClickAwayListener>
-                        </Box>
-                        
-                        <FormControl sx={{ minWidth: isMobile ? '100%' : 140 }}>
-                          <Select
-                            value={selectedRoleFilter}
-                            onChange={(e) => setSelectedRoleFilter(e.target.value as number | 'all')}
-                            sx={{ borderRadius: 2 }}
-                            renderValue={(value) => (
-                              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                <FilterIcon fontSize="small" />
-                                <Typography variant="body2">
-                                  {value === 'all' ? 'All Roles' : 
-                                   value === 1 ? 'Owners' :
-                                   value === 2 ? 'Admins' :
-                                   value === 3 ? 'Members' : 'Guests'}
-                                </Typography>
-                              </Box>
-                            )}
-                          >
-                            <MenuItem value="all">All Roles</MenuItem>
-                            <MenuItem value={1}>Owners</MenuItem>
-                            <MenuItem value={2}>Admins</MenuItem>
-                            <MenuItem value={3}>Members</MenuItem>
-                            <MenuItem value={4}>Guests</MenuItem>
-                          </Select>
-                        </FormControl>
-                      </Box>
+                        <TeamMemberSearch
+                            teamId={projectData.team}
+                            disabled={!projectData.team}
+                            excludeIds={assignees.map(a => a.user.id)}
+                            onSelect={(member) => handleAddAssignee(member)}
+                            placeholder="Search team members to add..."
+                        />
                     </Paper>
 
-                    {!searchQuery && (
-                      <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', mb: 3 }}>
-                        Search for team members to add them to the project
-                      </Typography>
-                    )}
                   </Box>
                 </>
               )}
@@ -1438,11 +1280,12 @@ const handleCreateProject = async () => {
           Cancel
         </Button>
         
+        {/* Tab Navigation */}
         {activeTab === 0 ? (
           <Button 
             onClick={() => setActiveTab(1)}
             variant="outlined"
-            disabled={!projectData.team}
+            disabled={!projectData.team || !canAddAssignees}
             endIcon={<ChevronRightIcon />}
             sx={{ 
               borderRadius: 2,
@@ -1483,10 +1326,11 @@ const handleCreateProject = async () => {
           </Button>
         )}
         
+        {/* Create Button */}
         <Button 
           onClick={handleCreateProject} 
           variant="contained"
-          disabled={!canCreateProject() || loading}
+          disabled={!projectData.team || !projectData.name.trim() || loading || !canEditProject}
           startIcon={loading ? <CircularProgress size={16} /> : <RocketIcon />}
           sx={{ 
             borderRadius: 2,
@@ -1502,8 +1346,10 @@ const handleCreateProject = async () => {
               boxShadow: '0 6px 16px rgba(79, 70, 229, 0.4)',
             },
             '&:disabled': {
-              background: 'linear-gradient(135deg, #9ca3af 0%, #6b7280 100%)',
+              background: '#e2e8f0',
+              color: '#94a3b8',
               boxShadow: 'none',
+              cursor: 'not-allowed'
             }
           }}
         >

@@ -282,6 +282,8 @@ const ProjectCard = ({
   const navigate = useNavigate();
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
+  const statusConfig = PROJECT_STATUS_CONFIG[project.status] || PROJECT_STATUS_CONFIG[ProjectStatus.PLANNING];
+  
 
   return (
     <Card 
@@ -341,26 +343,37 @@ const ProjectCard = ({
               <StarIcon sx={{ fontSize: compact ? 18 : 20 }} />
             </IconButton>
             
-            <Chip
-              icon={React.cloneElement(PROJECT_STATUS_CONFIG[project.status]?.icon, {
-                sx: { 
-                  color: PROJECT_STATUS_CONFIG[project.status]?.iconColor,
-                  fontSize: compact ? 14 : 16
-                }
-              })}
-              label={!isMobile ? PROJECT_STATUS_CONFIG[project.status]?.label : PROJECT_STATUS_CONFIG[project.status]?.label.slice(0, 3)}
-              color={PROJECT_STATUS_CONFIG[project.status]?.color}
-              size="small"
-              sx={{ 
-                fontWeight: '600', 
-                borderRadius: 1,
-                height: compact ? 24 : 28,
-                fontSize: compact ? '0.7rem' : '0.75rem',
-                alignSelf: 'flex-start', // Align to top
-                mt: 0.5 // Match favorite button alignment
-              }}
-            />
-          </Box>
+          <Chip
+            icon={
+              statusConfig?.icon ? (
+                React.cloneElement(statusConfig.icon, {
+                  sx: { 
+                    color: statusConfig.iconColor,
+                    fontSize: compact ? 14 : 16
+                  }
+                })
+              ) : <PlanningIcon fontSize="small" />
+            }
+            label={
+              !isMobile 
+                ? (statusConfig?.label || 'Unknown')
+                : (statusConfig?.label?.slice(0, 3) || 'UNK')
+            }
+            color={statusConfig?.color || 'default'}
+            size="small"
+            sx={{ 
+              fontWeight: '600', 
+              borderRadius: 1,
+              height: compact ? 24 : 28,
+              fontSize: compact ? '0.7rem' : '0.75rem',
+              alignSelf: 'flex-start',
+              mt: 0.5,
+              // Add background color safely
+              backgroundColor: statusConfig?.bgColor,
+              color: statusConfig?.textColor
+            }}
+          />
+        </Box>
           
           {/* Right side: Priority + Menu - Now properly aligned in single row */}
           <Box sx={{ 
@@ -560,6 +573,7 @@ const ProjectListItem = ({
 }) => {
   const navigate = useNavigate();
   const isMobile = useMediaQuery('(max-width: 600px)');
+  const statusConfig = PROJECT_STATUS_CONFIG[project.status] || PROJECT_STATUS_CONFIG[ProjectStatus.PLANNING];
 
   return (
     <Paper 
@@ -602,13 +616,19 @@ const ProjectListItem = ({
                 sx={{ fontWeight: '600' }}
               />
               {project.priority && (
-                <Chip
-                  icon={PRIORITY_CONFIG[project.priority].icon}
-                  label={PRIORITY_CONFIG[project.priority].label}
-                  color={PRIORITY_CONFIG[project.priority].color as any}
-                  size="small"
-                  sx={{ fontWeight: '600' }}
-                />
+            <Chip
+              icon={
+                statusConfig?.icon ? (
+                  React.cloneElement(statusConfig.icon, {
+                    sx: { color: statusConfig.iconColor }
+                  })
+                ) : <PlanningIcon />
+              }
+              label={statusConfig?.label || 'Unknown'}
+              color={statusConfig?.color || 'default'}
+              size="small"
+              sx={{ fontWeight: '600' }}
+            />
               )}
               {isAllProjectsView && project.team_name && !isMobile && (
                 <Chip label={project.team_name} size="small" variant="outlined" sx={{ fontWeight: '500' }} />

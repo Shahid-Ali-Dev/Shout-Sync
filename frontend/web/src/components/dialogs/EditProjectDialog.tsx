@@ -1,5 +1,5 @@
-// src/components/dialogs/EditProjectDialog.tsx - COMPLETE FIXED VERSION
-import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+// src/components/dialogs/EditProjectDialog.tsx
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   Dialog,
   DialogTitle,
@@ -28,20 +28,10 @@ import {
   Tab,
   Stack,
   Fade,
-  Grid,
   Grow,
   AvatarGroup,
   Badge,
   LinearProgress,
-  InputAdornment,
-  List,
-  ListItem,
-  ListItemAvatar,
-  ListItemText,
-  ListItemSecondaryAction,
-  debounce,
-  ClickAwayListener,
-  Popper,
   Skeleton,
 } from '@mui/material';
 import {
@@ -54,14 +44,11 @@ import {
   AdminPanelSettings as AdminIcon,
   SupervisorAccount as ManagerIcon,
   HowToReg as ContributorIcon,
-  Search as SearchIcon,
-  FilterList as FilterIcon,
   Group as GroupsIcon,
   ChevronRight as ChevronRightIcon,
   Workspaces as WorkspacesIcon,
-  Diversity3 as Diversity3Icon,
   EmojiPeople as EmojiPeopleIcon,
-  Clear as ClearIcon,
+  Diversity3 as Diversity3Icon,
   CheckCircle as CheckCircleIcon,
   Pause as PauseIcon,
   Cancel as CancelIcon,
@@ -73,6 +60,8 @@ import { projectAPI } from '../../shared/services/projectAPI';
 import { teamAPI } from '../../shared/services/teamAPI';
 import { useSelector } from 'react-redux';
 import { RootState } from '../../shared/store/store';
+// Import your separate component
+import TeamMemberSearch, { TeamMemberResult } from '../common/TeamMemberSearch';
 
 interface EditProjectDialogProps {
   open: boolean;
@@ -82,8 +71,6 @@ interface EditProjectDialogProps {
   teamId?: string;
   teams?: Array<{ id: string; name: string; member_count: number }>;
 }
-
-// Place this BEFORE EditProjectDialog
 
 interface AssigneeItemProps {
   assignee: Assignee;
@@ -95,14 +82,13 @@ interface AssigneeItemProps {
   canRemove: boolean;
   canEditRole: boolean;
   myRank: number;
-  index: number; // Make sure to add index here
-  disableAnimation: boolean; // <--- ADD THIS
+  index: number;
+  disableAnimation: boolean;
   onRoleChange: (userId: string, role: number) => void;
   onRemove: (userId: string) => void;
   formatLastActive: (date?: string) => string;
   isUserOnline: (date?: string) => boolean;
 }
-
 
 interface Team {
   id: string;
@@ -124,12 +110,6 @@ interface TeamMemberUser extends User {
   teamRole: number;
   last_active?: string;
   joined_at?: string;
-}
-
-interface TeamMember {
-  id: string;
-  user: User;
-  role: number;
 }
 
 interface Assignee {
@@ -174,49 +154,6 @@ const ASSIGNEE_ROLES = [
   },
 ];
 
-const PROJECT_STATUS_CONFIG: Record<number, any> = {
-  1: {
-    label: 'Planning',
-    color: 'default',
-    icon: <PlanningIcon fontSize="small" />,
-    bgColor: 'grey.50',
-    textColor: 'grey.700',
-    iconColor: '#6B7280'
-  },
-  2: {
-    label: 'Active',
-    color: 'success',
-    icon: <PlayIcon fontSize="small" />,
-    bgColor: 'success.50',
-    textColor: 'success.700',
-    iconColor: '#10B981'
-  },
-  3: {
-    label: 'On Hold',
-    color: 'warning',
-    icon: <PauseIcon fontSize="small" />,
-    bgColor: 'warning.50',
-    textColor: 'warning.700',
-    iconColor: '#F59E0B'
-  },
-  4: {
-    label: 'Completed',
-    color: 'info',
-    icon: <CheckCircleIcon fontSize="small" />,
-    bgColor: 'info.50',
-    textColor: 'info.700',
-    iconColor: '#3B82F6'
-  },
-  5: {
-    label: 'Cancelled',
-    color: 'error',
-    icon: <CancelIcon fontSize="small" />,
-    bgColor: 'error.50',
-    textColor: 'error.700',
-    iconColor: '#EF4444'
-  },
-};
-
 const EditProjectDialog: React.FC<EditProjectDialogProps> = ({
   open,
   onClose,
@@ -228,35 +165,23 @@ const EditProjectDialog: React.FC<EditProjectDialogProps> = ({
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
   const { user } = useSelector((state: RootState) => state.auth);
-  const [listAnimationComplete, setListAnimationComplete] = useState(false);
   
   const [loading, setLoading] = useState(false);
-  
   const [saving, setSaving] = useState(false);
   const [availableTeams, setAvailableTeams] = useState<Team[]>([]);
   const [teamsLoading, setTeamsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState(0);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [selectedRoleFilter, setSelectedRoleFilter] = useState<number | 'all'>('all');
+  
+  // Assignee State
   const [assignees, setAssignees] = useState<Assignee[]>([]);
   const [originalAssignees, setOriginalAssignees] = useState<Assignee[]>([]);
   const [isAnimating, setIsAnimating] = useState(false);
+  const [listAnimationComplete, setListAnimationComplete] = useState(false);
+  const [totalMembers, setTotalMembers] = useState(0); // Kept for progress bar logic
 
-  const [defaultMembers, setDefaultMembers] = useState<TeamMemberUser[]>([]);
-  const [loadingDefaultMembers, setLoadingDefaultMembers] = useState(false);
-  
-  // Search state
-  const [searchResults, setSearchResults] = useState<TeamMemberUser[]>([]);
-  const [searchLoading, setSearchLoading] = useState(false);
-  const [totalMembers, setTotalMembers] = useState(0);
-  const [searchPage, setSearchPage] = useState(1);
-  const [hasMoreMembers, setHasMoreMembers] = useState(true);
-  const searchAnchorRef = useRef<HTMLDivElement>(null);
-  const [searchOpen, setSearchOpen] = useState(false);
-  const [searchInitiated, setSearchInitiated] = useState(false); // Track if search was initiated
-  
+  // Role State
   const [userRole, setUserRole] = useState<'OWNER' | 'ADMIN' | 'MEMBER' | 'GUEST' | null>(null);
   const [permissionError, setPermissionError] = useState<string | null>(null);
 
@@ -277,42 +202,30 @@ const EditProjectDialog: React.FC<EditProjectDialogProps> = ({
       [assignees, user?.id]
     );
 
-    const projectRole = currentUserAssignee?.role || 0; // 0 = Not assigned, 1=Contributor, 2=Manager, 3=Lead
-    
+    const projectRole = currentUserAssignee?.role || 0; 
     const isProjectLead = projectRole === 3;
     const isProjectManager = projectRole === 2;
-    const isProjectContributor = projectRole === 1;
     const isAssigned = projectRole > 0;
     const isTeamAdmin = userRole === 'OWNER' || userRole === 'ADMIN';
-    const effectiveRole = userRole || 'GUEST';
 
     // 2. Define Permissions
-    // Allow access if Team Admin OR Team Member OR Assigned to project
     const canEditProject = isTeamAdmin || userRole === 'MEMBER' || isAssigned;
-
-    // Edit Details (Name, Dates, Status): Allow Team Admins OR ANY Assignee (Contributor/Manager/Lead)
     const canEditProjectDetails = isTeamAdmin || isAssigned;
-
-    // Transfer Project: Only Team Owners/Admins (High level action)
     const canTransferProject = isTeamAdmin;
-
-    // Manage People: Team Admins OR Project Leads OR Project Managers
     const canEditAssignees = isTeamAdmin || isProjectLead || isProjectManager;
     const canAddAssignees = isTeamAdmin || isProjectLead || isProjectManager;
-    // ==============================================================
 
   // Get current team from project
   const currentTeam = useMemo(() => {
-    const targetTeamId = project?.team?.id || teamId;
+    const projectTeamId = typeof project?.team === 'object' ? project.team.id : project?.team;
+    const targetTeamId = projectTeamId || teamId;
     
-    // First try to find in availableTeams
     if (targetTeamId && availableTeams.length > 0) {
       const foundTeam = availableTeams.find(team => team.id === targetTeamId);
       if (foundTeam) return foundTeam;
     }
     
-    // If not found, try to construct from project data
-    if (project?.team) {
+    if (project?.team && typeof project.team === 'object') {
       return {
         id: project.team.id || targetTeamId,
         name: project.team.name || 'Team',
@@ -321,7 +234,6 @@ const EditProjectDialog: React.FC<EditProjectDialogProps> = ({
       };
     }
     
-    // Fallback: return a minimal team object
     return {
       id: targetTeamId || '',
       name: 'Team',
@@ -338,17 +250,12 @@ const EditProjectDialog: React.FC<EditProjectDialogProps> = ({
 
     // 2. Helper to check if I can manage a specific target user
     const canManageTargetUser = (targetUserId: string, targetRole: number) => {
-      // Rule 1: Cannot manage myself
       if (targetUserId === user?.id) return false;
-      
-      // Rule 2: Cannot manage the Project Creator (unless I am Team Owner)
       if (targetUserId === project?.created_by?.id && userRole !== 'OWNER') return false;
-
-      // Rule 3: I must have a strictly higher rank than the target to edit them
       return myRank > targetRole;
     };
 
-  // FIXED: Improved formatLastActive function
+  // Helper Functions
   const formatLastActive = (lastActive?: string): string => {
     if (!lastActive || lastActive === 'null' || lastActive === 'undefined' || lastActive === '') {
       return 'Never';
@@ -356,148 +263,94 @@ const EditProjectDialog: React.FC<EditProjectDialogProps> = ({
     
     try {
       let date: Date;
-      
-      // Try to parse the string as a date
       const parsedDate = new Date(lastActive);
       
       if (isNaN(parsedDate.getTime())) {
-        // If parsing fails, try to handle numeric timestamp
         const timestamp = parseInt(lastActive, 10);
         if (!isNaN(timestamp)) {
           date = new Date(timestamp);
         } else {
-          // Try to clean and parse the string
-          const cleaned = lastActive
-            .replace('Z', '')
-            .replace('+00:00', '')
-            .replace('T', ' ')
-            .trim();
+          const cleaned = lastActive.replace('Z', '').replace('+00:00', '').replace('T', ' ').trim();
           date = new Date(cleaned);
         }
         
-        // If still invalid after all attempts
-        if (isNaN(date.getTime())) {
-          return 'Never';
-        }
+        if (isNaN(date.getTime())) return 'Never';
       } else {
         date = parsedDate;
       }
       
       const now = new Date();
       const diffMs = now.getTime() - date.getTime();
-      const diffSeconds = Math.floor(diffMs / 1000);
-      const diffMins = Math.floor(diffSeconds / 60);
-      const diffHours = Math.floor(diffMins / 60);
-      const diffDays = Math.floor(diffHours / 24);
+      const diffMins = Math.floor(diffMs / 60000);
       
-      // Check if online (less than 5 minutes ago)
-      if (diffMins < 5) {
-        return 'Just now'; // Changed from "Online" to "Just now"
-      }
+      if (diffMins < 5) return 'Just now';
+      if (diffMins < 60) return `${diffMins}m ago`;
+      if (diffMins < 1440) return `${Math.floor(diffMins / 60)}h ago`;
       
-      // Format based on time difference
-      if (diffMins < 60) {
-        return `${diffMins}m ago`;
-      } else if (diffHours < 24) {
-        return `${diffHours}h ago`;
-      } else if (diffDays < 7) {
-        return `${diffDays}d ago`;
-      } else if (diffDays < 30) {
-        const weeks = Math.floor(diffDays / 7);
-        return `${weeks}w ago`;
-      } else if (diffDays < 365) {
-        const months = Math.floor(diffDays / 30);
-        return `${months}mo ago`;
-      } else {
-        // Return formatted date for older entries
-        return date.toLocaleDateString('en-US', { 
-          month: 'short', 
-          day: 'numeric',
-          year: 'numeric'
-        });
-      }
-    } catch (error) {
-      console.error('Error formatting last active:', error, 'Input:', lastActive);
+      return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    } catch {
       return 'Unknown';
     }
   };
 
-  // FIXED: isUserOnline function
   const isUserOnline = (lastActive?: string): boolean => {
     if (!lastActive) return false;
-    
     try {
       const date = new Date(lastActive);
       if (isNaN(date.getTime())) return false;
-      
       const now = new Date();
-      const diffMs = now.getTime() - date.getTime();
-      const diffMins = Math.floor(diffMs / 1000 / 60);
-      
-      return diffMins < 5;
-    } catch (error) {
+      return (now.getTime() - date.getTime()) < 5 * 60 * 1000;
+    } catch {
       return false;
     }
   };
 
-// Optimized loadTeams
+  // Optimized loadTeams (Removed manual member search list logic)
   const loadTeams = useCallback(async () => {
     try {
       setTeamsLoading(true);
-      const targetTeamId = project?.team?.id || teamId;
+      
+      const projectTeamId = typeof project?.team === 'object' ? project.team.id : project?.team;
+      const targetTeamId = projectTeamId || teamId;
 
-      // 1. Start fetching teams
+      // 1. Fetch Teams
       const teamsPromise = teams.length > 0 
         ? Promise.resolve({ data: teams }) 
         : teamAPI.getTeams();
 
-      // 2. Start fetching members (for role check) if we have a team ID
-      // Note: We fetch minimal data to check role quickly
-      const membersPromise = targetTeamId 
-        ? teamAPI.getTeamMembers(targetTeamId)
-        : Promise.resolve({ data: [] });
-
-      // 3. Start fetching default members for UI list (Optimized endpoint)
-      const defaultsPromise = targetTeamId
-        ? teamAPI.getTeamMembersOptimized(targetTeamId, 1, 20)
+      // 2. Fetch minimal members data for Role Check and Total Count
+      const membersPromise = targetTeamId
+        ? teamAPI.getTeamMembersOptimized(targetTeamId, 1, 1)
         : Promise.resolve({ data: { results: [], total: 0 } });
 
-      // WAIT for all to finish parallel execution
-      const [teamsRes, membersRes, defaultsRes] = await Promise.all([
+      const [teamsRes, membersRes] = await Promise.all([
         teamsPromise,
         membersPromise,
-        defaultsPromise
       ]);
 
-      // Handle Teams
       setAvailableTeams(teamsRes.data);
 
-      // Handle Role
-      if (targetTeamId && membersRes.data) {
-        const userMember = membersRes.data.find((m: any) => m.user.id === user?.id);
-        const roleMap: Record<number, 'OWNER' | 'ADMIN' | 'MEMBER' | 'GUEST'> = {
-          1: 'OWNER', 2: 'ADMIN', 3: 'MEMBER', 4: 'GUEST'
-        };
-        setUserRole(userMember ? roleMap[userMember.role] : 'GUEST');
-      }
-
-      // Handle Default Members
-      if (defaultsRes.data?.results) {
-        const processedMembers = defaultsRes.data.results.map((member: any) => {
-           const user = member.user || member;
-           const lastActive = user.last_active || member.last_active || member.joined_at || user.created_at || null;
-           return {
-             id: user.id,
-             email: user.email,
-             first_name: user.first_name,
-             last_name: user.last_name,
-             avatar: user.avatar,
-             teamRole: member.role,
-             last_active: lastActive,
-           };
-        });
-        setDefaultMembers(processedMembers);
-        setTotalMembers(defaultsRes.data.total || 0);
+      // Set Total Members count for progress bar
+      if (membersRes.data) {
+        setTotalMembers(membersRes.data.total || 0);
+        
+        // Determine Role
+        if (membersRes.data.results) {
+            // Note: optimized endpoint usually returns list, we might need a specific check if not in first page
+            // But for efficiency we assume user context or separate perm check. 
+            // Better to use the full list or a 'me' endpoint if available, falling back to what we have.
+            const userMember = membersRes.data.results.find((m: any) => 
+                (m.user?.id === user?.id) || (m.id === user?.id)
+            );
+            
+            if (userMember) {
+                const roleMap: Record<number, any> = { 1: 'OWNER', 2: 'ADMIN', 3: 'MEMBER', 4: 'GUEST' };
+                setUserRole(roleMap[userMember.role] || 'GUEST');
+            } else {
+                // Fallback / Default
+                setUserRole('GUEST'); 
+            }
+        }
       }
 
     } catch (error) {
@@ -508,90 +361,22 @@ const EditProjectDialog: React.FC<EditProjectDialogProps> = ({
     }
   }, [teams, project?.team?.id, teamId, user]);
   
-  // FIXED: Enhanced loadDefaultMembers function
-  const loadDefaultMembers = async (teamId: string) => {
-    try {
-      setLoadingDefaultMembers(true);
-      
-      // Fetch team members with pagination
-      const response = await teamAPI.getTeamMembersOptimized(teamId, 1, 20);
-      
-      if (response.data.results) {
-        // Process members with proper last_active data
-        const processedMembers = response.data.results
-          .map((member: any) => {
-            const user = member.user || member;
-            
-            // Extract last_active from various possible fields
-            const lastActive = 
-              user.last_active || 
-              member.last_active || 
-              member.joined_at || 
-              user.created_at ||
-              null;
-            
-            return {
-              id: user.id,
-              email: user.email,
-              first_name: user.first_name,
-              last_name: user.last_name,
-              avatar: user.avatar,
-              teamRole: member.role,
-              last_active: lastActive,
-              // Add a timestamp for sorting
-              _lastActiveTimestamp: lastActive ? new Date(lastActive).getTime() : 0
-            };
-          })
-          .sort((a: any, b: any) => {
-            // Sort by timestamp (most recent first)
-            return b._lastActiveTimestamp - a._lastActiveTimestamp;
-          })
-          .slice(0, 10);
-        
-        // Remove the temporary sorting property
-        const cleanMembers = processedMembers.map(({ _lastActiveTimestamp, ...rest }: any) => rest);
-        
-        setDefaultMembers(cleanMembers);
-        setTotalMembers(response.data.total || 0);
-        
-        // If search is open and query is empty, update search results too
-        if (searchOpen && searchQuery.trim() === '' && !searchInitiated) {
-          setSearchResults(cleanMembers);
-          setHasMoreMembers(false);
-        }
-        
-        // Debug log
-        console.log('FIXED: Loaded default members:', cleanMembers.map((m: any) => ({
-          name: `${m.first_name} ${m.last_name}`,
-          last_active: m.last_active,
-          formatted: formatLastActive(m.last_active),
-          online: isUserOnline(m.last_active),
-        })));
-      }
-      
-    } catch (error) {
-      console.error('Failed to load default members:', error);
-    } finally {
-      setLoadingDefaultMembers(false);
-    }
-  };
-
   // Initialize data when dialog opens
   useEffect(() => {
     if (open && project) {
       loadTeams();
       
-      // Initialize project data
+      const projectTeamId = typeof project.team === 'object' ? project.team.id : project.team;
+
       setProjectData({
         name: project.name || '',
         description: project.description || '',
         start_date: project.start_date ? new Date(project.start_date).toISOString().split('T')[0] : '',
         end_date: project.end_date ? new Date(project.end_date).toISOString().split('T')[0] : '',
         status: project.status || 1,
-        team_id: project.team?.id || teamId || '',
+        team_id: projectTeamId || teamId || '', 
       });
 
-      // Initialize assignees
       const initialAssignees: Assignee[] = (project.assignees || []).map((assignee: any) => ({
         id: assignee.id || assignee.user?.id,
         user: assignee.user_details || assignee.user,
@@ -601,33 +386,24 @@ const EditProjectDialog: React.FC<EditProjectDialogProps> = ({
       
       setAssignees(initialAssignees);
       setOriginalAssignees(initialAssignees);
-      setSearchResults([]);
-      setSearchPage(1);
-      setSearchOpen(false);
-      setSearchInitiated(false); // Reset search initiated state
-      setSearchQuery(''); // Clear search query
       setError(null);
       setSuccessMessage(null);
       setPermissionError(null);
     }
   }, [open, project, teamId, loadTeams]);
 
-  // Find this useEffect near the top of your component and replace it
+  // Animation delay effect
     useEffect(() => {
       if (activeTab === 1) { 
-        // Only set the timer to DISABLE animation. 
-        // We handle the 'enable' part in the Tab onChange now.
         const timer = setTimeout(() => {
           setListAnimationComplete(true);
         }, 800);
-        
         return () => clearTimeout(timer);
       }
     }, [activeTab]);
 
   // Check permissions when dialog opens
     useEffect(() => {
-      // Check if user is in the raw project data (before state populates)
       const isUserAssigned = project?.assignees?.some((a: any) => 
         (a.user?.id === user?.id) || (a.id === user?.id)
       );
@@ -639,201 +415,11 @@ const EditProjectDialog: React.FC<EditProjectDialogProps> = ({
       }
     }, [open, project, userRole, user?.id]);
 
-  // FIXED: Enhanced debouncedSearch with better error handling
-  const debouncedSearch = useMemo(
-    () => debounce((query: string) => {
-      if (!currentTeam?.id) return;
-      
-      const performSearch = async (q: string) => {
-        try {
-          setSearchLoading(true);
-          
-          const response = await teamAPI.searchTeamMembers(
-            currentTeam.id, 
-            q, 
-            1,
-            selectedRoleFilter !== 'all' ? selectedRoleFilter : undefined
-          );
-          
-          const data = response.data.results || response.data;
-          const total = response.data.total || data.length;
-          
-          setTotalMembers(total);
-          setHasMoreMembers(response.data.has_next || false);
-          
-          const formattedMembers = data.map((member: any) => {
-            const user = member.user || member;
-            const lastActive = 
-              user.last_active || 
-              member.last_active || 
-              member.joined_at ||
-              null;
-            
-            return {
-              id: user.id,
-              email: user.email,
-              first_name: user.first_name,
-              last_name: user.last_name,
-              avatar: user.avatar,
-              teamRole: member.role,
-              last_active: lastActive,
-            };
-          });
-          
-          setSearchResults(formattedMembers);
-          setSearchPage(1);
-          setSearchOpen(true);
-        } catch (error) {
-          console.error('Search failed:', error);
-          setSearchResults([]);
-        } finally {
-          setSearchLoading(false);
-        }
-      };
-      
-      performSearch(query);
-    }, 350), // Increased debounce time for smoother typing
-    [currentTeam, selectedRoleFilter]
-  );
-
-  // FIXED: Enhanced searchMembers function
-  const searchMembers = useCallback(async (query: string, page: number = 1) => {
-    if (!currentTeam?.id) return;
-    
-    try {
-      setSearchLoading(true);
-      
-      if (query.trim() === '' && page === 1) {
-        // If empty query on first page, show default members
-        setSearchResults(defaultMembers);
-        setHasMoreMembers(false);
-        setSearchPage(1);
-        return;
-      }
-      
-      const response = await teamAPI.searchTeamMembers(
-        currentTeam.id, 
-        query, 
-        page,
-        selectedRoleFilter !== 'all' ? selectedRoleFilter : undefined
-      );
-      
-      const data = response.data.results || response.data;
-      const total = response.data.total || data.length;
-      
-      setTotalMembers(total);
-      setHasMoreMembers(response.data.has_next || false);
-      
-      // Ensure consistent data structure with defaultMembers
-      const formattedMembers = data.map((member: any) => {
-        const user = member.user || member;
-        const lastActive = 
-          user.last_active || 
-          member.last_active || 
-          member.joined_at ||
-          null;
-        
-        return {
-          id: user.id,
-          email: user.email,
-          first_name: user.first_name,
-          last_name: user.last_name,
-          avatar: user.avatar,
-          teamRole: member.role,
-          last_active: lastActive,
-        };
-      });
-      
-      if (page === 1) {
-        setSearchResults(formattedMembers);
-      } else {
-        setSearchResults(prev => [...prev, ...formattedMembers]);
-      }
-      
-      setSearchPage(page);
-    } catch (error) {
-      console.error('Search failed:', error);
-    } finally {
-      setSearchLoading(false);
-    }
-  }, [currentTeam, selectedRoleFilter, defaultMembers]);
-
-  // FIXED: Enhanced useEffect for search query changes
-  useEffect(() => {
-    if (!currentTeam?.id || !searchInitiated) return;
-    
-    const timeoutId = setTimeout(() => {
-      if (searchQuery.trim() === '') {
-        // When search is empty, filter default members locally
-        let filteredDefaults = defaultMembers;
-        
-        if (selectedRoleFilter !== 'all') {
-          filteredDefaults = defaultMembers.filter(m => m.teamRole === selectedRoleFilter);
-        }
-        
-        setSearchResults(filteredDefaults);
-        setHasMoreMembers(false);
-        setSearchPage(1);
-        setSearchOpen(true);
-      } else {
-        // When there's a query, perform server-side search
-        debouncedSearch(searchQuery);
-      }
-    }, 100);
-    
-    return () => clearTimeout(timeoutId);
-  }, [searchQuery, currentTeam, debouncedSearch, defaultMembers, searchInitiated, selectedRoleFilter]);
-
-  // FIXED: Completely rewrite the handleSearchInputClick function
-  const handleSearchInputClick = () => {
-    // Mark that search has been initiated
-    setSearchInitiated(true);
-    
-    // If search is empty, show default members immediately
-    if (searchQuery.trim() === '') {
-      // Ensure we have default members to show
-      if (defaultMembers.length > 0) {
-        // ADD FILTER LOGIC HERE
-        let filteredDefaults = defaultMembers;
-        if (selectedRoleFilter !== 'all') {
-          filteredDefaults = defaultMembers.filter(m => m.teamRole === selectedRoleFilter);
-        }
-        
-        setSearchResults(filteredDefaults);
-        setHasMoreMembers(false);
-      } else if (!loadingDefaultMembers && currentTeam?.id) {
-        // Load default members if not already loaded
-        loadDefaultMembers(currentTeam.id);
-      }
-    }
-    
-    // Open the dropdown
-    setSearchOpen(true);
-  };
-
-  // FIXED: Enhanced ClickAwayListener behavior
-  const handleClickAway = (event: MouseEvent | TouchEvent) => {
-    // Don't close if clicking on the search input or dropdown
-    const target = event.target as HTMLElement;
-    const isClickInSearch = 
-      searchAnchorRef.current?.contains(target) ||
-      target.closest('.search-dropdown') !== null;
-    
-    if (!isClickInSearch) {
-      setSearchOpen(false);
-      // Keep search initiated so we can reopen with default members
-    }
-  };
-
   const handleTeamChange = async (teamId: string) => {
     setProjectData(prev => ({ ...prev, team_id: teamId }));
     setAssignees([]);
-    setSearchQuery('');
-    setSearchResults([]);
-    setSearchOpen(false);
-    setSearchInitiated(false);
     
-    // Load team member count
+    // Load team member count for the new team
     try {
       const membersResponse = await teamAPI.getTeamMembersOptimized(teamId, 1, 1);
       setTotalMembers(membersResponse.data.total || 0);
@@ -855,20 +441,16 @@ const EditProjectDialog: React.FC<EditProjectDialogProps> = ({
     }));
   };
 
-
-  const handleAddAssignee = (member: User | TeamMemberUser, role: number = 1) => {
-    // Check permissions
+  const handleAddAssignee = (member: TeamMemberResult | TeamMemberUser, role: number = 1) => {
     if (!canAddAssignees) {
       setError('You do not have permission to add assignees');
       return;
     }
 
-    // Check if already added
     if (assignees.some(assignee => assignee.user.id === member.id)) {
       return;
     }
 
-    // Extract the user data, removing any extra properties like teamRole
     const userData: User = {
       id: member.id,
       email: member.email,
@@ -884,22 +466,19 @@ const EditProjectDialog: React.FC<EditProjectDialogProps> = ({
       role,
       isLead: role === 3
     };
-    
+     
     setIsAnimating(true);
     setAssignees(prev => [...prev, newAssignee]);
-    setSearchOpen(false);
-    setSearchQuery('');
     
     setTimeout(() => setIsAnimating(false), 300);
   };
-  const handleRemoveAssignee = (userId: string) => {
-    // Don't allow removing creator if they're the only assignee
-    if (userId === project?.created_by?.id && assignees.length === 1) {
-      setError('You cannot remove yourself as the only assignee');
+
+const handleRemoveAssignee = (userId: string) => {
+    if (assignees.length === 1 && assignees[0].user.id === userId) {
+      setError('A project must have at least one member.');
       return;
     }
     
-    // Check permissions
     if (!canAddAssignees) {
       setError('You do not have permission to remove assignees');
       return;
@@ -916,7 +495,7 @@ const EditProjectDialog: React.FC<EditProjectDialogProps> = ({
       setError('You do not have permission to update assignee roles');
       return;
     }
-    
+     
     setAssignees(prev => 
       prev.map(assignee => 
         assignee.user.id === userId 
@@ -925,9 +504,10 @@ const EditProjectDialog: React.FC<EditProjectDialogProps> = ({
       )
     );
   };
-// Memoized component to prevent re-renders of the whole list
+
+// Memoized component for rows
 const AssigneeRow = React.memo(({ 
-  assignee, index, disableAnimation, // <--- Destructure new props
+  assignee, index, disableAnimation, 
   currentUserId, projectCreatorId, isTeamAdmin, userRole, 
   canEditAssignees, canRemove, canEditRole, myRank, 
   onRoleChange, onRemove, formatLastActive, isUserOnline 
@@ -938,9 +518,7 @@ const AssigneeRow = React.memo(({
   return (
     <Grow 
       in={true} 
-      // LOGIC: If animation is disabled (after load), timeout is 0 (instant).
-      // Otherwise, use the staggered calculation.
-      timeout={disableAnimation ? 0 : (index + 1) * 100} 
+      timeout={disableAnimation ? 0 : 300}
     >
       <Paper sx={{ p: 2, borderRadius: 2, backgroundColor: 'white', border: '1px solid', borderColor: isMe ? 'primary.main' : 'divider', boxShadow: isMe ? '0 2px 8px rgba(79, 70, 229, 0.15)' : '0 1px 3px rgba(0, 0, 0, 0.08)', transition: 'all 0.3s ease', '&:hover': { boxShadow: '0 4px 12px rgba(0, 0, 0, 0.12)', transform: 'translateY(-1px)' } }}>
         <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 2 }}>
@@ -970,7 +548,7 @@ const AssigneeRow = React.memo(({
               )}
             </Box>
           </Box>
-          
+           
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
             <FormControl size="small" sx={{ minWidth: 140 }}>
               <Select
@@ -1019,17 +597,11 @@ const AssigneeRow = React.memo(({
     </Grow>
   );
 });
-  // Get available team members from search results (excluding already selected)
-  const getAvailableMembers = useMemo(() => {
-    return searchResults.filter(member => 
-      !assignees.some(selected => selected.user.id === member.id)
-    );
-  }, [searchResults, assignees]);
 
   // Get user role display name
   const userRoleName = userRole === 'OWNER' ? 'Owner' : 
-                      userRole === 'ADMIN' ? 'Admin' : 
-                      userRole === 'MEMBER' ? 'Member' : 'Guest';
+                       userRole === 'ADMIN' ? 'Admin' : 
+                       userRole === 'MEMBER' ? 'Member' : 'Guest';
 
   const validateForm = (): boolean => {
     if (!projectData.name.trim()) {
@@ -1055,10 +627,9 @@ const AssigneeRow = React.memo(({
     return true;
   };
 
-  const handleUpdateProject = async () => {
-    // Check permissions
+const handleUpdateProject = async () => {
     if (!canEditProject) {
-      setError('You do not have permission to update projects. Only Owners, Admins, and Members can edit projects.');
+      setError('You do not have permission to update projects...');
       return;
     }
     
@@ -1069,41 +640,33 @@ const AssigneeRow = React.memo(({
       setError(null);
       setSuccessMessage(null);
 
-      const assigneeData = {
-        assignee_ids: [] as string[],
-        assignee_roles: [] as number[],
-      };
-
-      // Always include creator as assignee
-      if (project?.created_by?.id) {
-        assigneeData.assignee_ids.push(project.created_by.id);
-        assigneeData.assignee_roles.push(3); // Creator is always Lead
-      }
-
-      // Add other assignees if user has permission
-      if (canEditAssignees) {
-        const otherAssignees = assignees.filter(a => a.user.id !== project?.created_by?.id);
-        otherAssignees.forEach(assignee => {
-          assigneeData.assignee_ids.push(assignee.user.id);
-          assigneeData.assignee_roles.push(assignee.role);
-        });
-      }
-
-      const formattedData = {
+      const formattedData: any = {
         name: projectData.name.trim(),
         description: projectData.description.trim(),
         start_date: new Date(projectData.start_date).toISOString(),
         end_date: new Date(projectData.end_date).toISOString(),
         status: projectData.status,
         team: projectData.team_id,
-        ...assigneeData
       };
 
-      // Check if team has changed
+      if (canEditAssignees) {
+        const assigneeData = {
+          assignee_ids: [] as string[],
+          assignee_roles: [] as number[],
+        };
+
+          assignees.forEach(assignee => {
+          assigneeData.assignee_ids.push(assignee.user.id);
+          assigneeData.assignee_roles.push(assignee.role);
+        });
+
+        formattedData.assignee_ids = assigneeData.assignee_ids;
+        formattedData.assignee_roles = assigneeData.assignee_roles;
+      }
+
       const isTeamChanged = projectData.team_id !== (project.team?.id || teamId);
       
       if (isTeamChanged && canTransferProject) {
-        // Handle team transfer
         const confirmTransfer = window.confirm(
           `Are you sure you want to transfer this project to the new team? This will:\n\n` +
           `• Notify all team members\n` +
@@ -1116,13 +679,12 @@ const AssigneeRow = React.memo(({
           return;
         }
 
-        const response = await projectAPI.transferProject(
+        await projectAPI.transferProject(
           project.team?.id || teamId,
           project.id,
           { target_team_id: projectData.team_id }
         );
 
-        // Then update project details
         const updateResponse = await projectAPI.updateProject(
           projectData.team_id,
           project.id,
@@ -1138,7 +700,6 @@ const AssigneeRow = React.memo(({
 
         setSuccessMessage('✅ Project transferred and updated successfully!');
       } else {
-        // Regular update
         const response = await projectAPI.updateProject(
           projectData.team_id,
           project.id,
@@ -1152,7 +713,6 @@ const AssigneeRow = React.memo(({
         setSuccessMessage('✅ Project updated successfully!');
       }
       
-      // Auto-close after success
       setTimeout(() => {
         handleClose();
         if (onProjectUpdated) {
@@ -1178,53 +738,31 @@ const AssigneeRow = React.memo(({
     }
   };
 
-  const handleClose = () => {
-    setProjectData({
-      name: '',
-      description: '',
-      start_date: '',
-      end_date: '',
-      status: 1,
-      team_id: '',
-    });
-    setAssignees([]);
-    setError(null);
-    setSuccessMessage(null);
-    setPermissionError(null);
-    setActiveTab(0);
-    setSearchQuery('');
-    setSelectedRoleFilter('all');
-    setIsAnimating(false);
-    setSearchResults([]);
-    setSearchOpen(false);
-    setSearchInitiated(false);
-    setUserRole(null); 
+const handleClose = () => {
     onClose();
-    
-  };
 
-  const loadMoreMembers = () => {
-    if (hasMoreMembers && !searchLoading) {
-      searchMembers(searchQuery, searchPage + 1);
-    }
+    setTimeout(() => {
+      setProjectData({
+        name: '',
+        description: '',
+        start_date: '',
+        end_date: '',
+        status: 1,
+        team_id: '',
+      });
+      setAssignees([]);
+      setError(null);
+      setSuccessMessage(null);
+      setPermissionError(null);
+      setActiveTab(0);
+      setIsAnimating(false);
+      setUserRole(null); 
+    }, 300);
   };
-
 
   const TeamRoleBadge = ({ role }: { role: number }) => {
-    const roleNames: Record<number, string> = {
-      1: 'Owner',
-      2: 'Admin',
-      3: 'Member',
-      4: 'Guest',
-    };
-    
-    const colors: Record<number, string> = {
-      1: '#EF4444',
-      2: '#3B82F6',
-      3: '#10B981',
-      4: '#6B7280',
-    };
-    
+    const roleNames: Record<number, string> = { 1: 'Owner', 2: 'Admin', 3: 'Member', 4: 'Guest' };
+    const colors: Record<number, string> = { 1: '#EF4444', 2: '#3B82F6', 3: '#10B981', 4: '#6B7280' };
     const color = colors[role] || colors[3];
     
     return (
@@ -1242,7 +780,6 @@ const AssigneeRow = React.memo(({
     );
   };
 
-  // Check if any changes were made
   const hasChanges = useMemo(() => {
     const dataChanged = 
       projectData.name !== project?.name ||
@@ -1257,7 +794,6 @@ const AssigneeRow = React.memo(({
     return dataChanged || assigneesChanged;
   }, [projectData, project, teamId, assignees, originalAssignees]);
 
-  // Loading state
   if (loading) {
     return (
       <Dialog open={open} onClose={handleClose} maxWidth="sm">
@@ -1290,7 +826,6 @@ const AssigneeRow = React.memo(({
       TransitionComponent={Fade}
       TransitionProps={{ timeout: 100 }}
     >
-      {/* Header */}
       <DialogTitle sx={{ 
         background: 'linear-gradient(135deg, #6366f1 0%, #4f46e5 100%)',
         color: 'white',
@@ -1327,7 +862,6 @@ const AssigneeRow = React.memo(({
               Edit Project
             </Typography>
             
-            {/* CONDITIONAL RENDERING: Show Skeleton if loading or role is unknown */}
             {teamsLoading || userRole === null ? (
               <Box sx={{ mt: 0.5, display: 'flex', alignItems: 'center', gap: 1 }}>
                 <Skeleton variant="text" width={100} height={20} />
@@ -1335,7 +869,6 @@ const AssigneeRow = React.memo(({
                 <Skeleton variant="text" width={120} height={20} />
               </Box>
             ) : (
-              // Actual Content
               currentTeam && (
                 <Typography variant="caption" sx={{ opacity: 0.9, display: 'block', mt: 0.5 }}>
                   <Box component="span" sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5 }}>
@@ -1371,7 +904,6 @@ const AssigneeRow = React.memo(({
         </Button>
       </DialogTitle>
 
-      {/* Permission Error Alert */}
       {!teamsLoading && userRole !== null && permissionError && (
         <Alert 
           severity="warning" 
@@ -1394,7 +926,6 @@ const AssigneeRow = React.memo(({
         </Alert>
       )}
 
-      {/* Error Alert */}
       {error && (
         <Alert 
           severity="error" 
@@ -1410,7 +941,6 @@ const AssigneeRow = React.memo(({
         </Alert>
       )}
 
-      {/* Success Alert */}
       {successMessage && (
         <Alert 
           severity="success" 
@@ -1427,7 +957,6 @@ const AssigneeRow = React.memo(({
       )}
 
       <DialogContent sx={{ p: 0 }}>
-        {/* Tabs */}
         <Box sx={{ 
           borderBottom: 1, 
           borderColor: 'divider',
@@ -1440,17 +969,9 @@ const AssigneeRow = React.memo(({
           value={activeTab} 
           onChange={(e, newValue) => {
             setActiveTab(newValue);
-            
-            // FIX: Reset animation state immediately when entering Team tab
             if (newValue === 1) {
               setListAnimationComplete(false); 
             }
-
-            // Close search dropdown when changing tabs
-            setSearchOpen(false);
-            setSearchQuery('');
-            setSearchResults([]);
-            setSearchInitiated(false);
           }}
             sx={{ 
               px: 3,
@@ -1697,9 +1218,9 @@ const AssigneeRow = React.memo(({
                           height: 8, 
                           borderRadius: '50%',
                           backgroundColor: status?.color === 'success' ? '#10B981' :
-                                         status?.color === 'warning' ? '#F59E0B' :
-                                         status?.color === 'error' ? '#EF4444' :
-                                         status?.color === 'info' ? '#3B82F6' : '#6B7280',
+                                           status?.color === 'warning' ? '#F59E0B' :
+                                           status?.color === 'error' ? '#EF4444' :
+                                           status?.color === 'info' ? '#3B82F6' : '#6B7280',
                         }} />
                         <Typography variant="body2" fontWeight="600">
                           {status?.label}
@@ -1868,306 +1389,20 @@ const AssigneeRow = React.memo(({
                     <Paper sx={{ 
                       p: 2, 
                       mb: 3, 
-                      borderRadius: 2,
-                      backgroundColor: 'white',
-                      border: '1px solid',
+                      borderRadius: 2, 
+                      backgroundColor: 'white', 
+                      border: '1px solid', 
                       borderColor: 'divider',
                       boxShadow: '0 2px 8px rgba(0, 0, 0, 0.04)',
                     }}>
-                      <Box sx={{ display: 'flex', gap: 2, flexDirection: isMobile ? 'column' : 'row' }}>
-                        <Box sx={{ flex: 1, position: 'relative' }} ref={searchAnchorRef}>
-                          <TextField
-                            fullWidth
-                            placeholder="Search team members or pick from recent..."
-                            value={searchQuery}
-                            onChange={(e) => {
-                              setSearchQuery(e.target.value);
-                              // Mark that user has interacted with search
-                              if (!searchInitiated) {
-                                setSearchInitiated(true);
-                              }
-                            }}
-                            onClick={handleSearchInputClick}
-                            onFocus={() => {
-                              // When input gets focus, ensure dropdown opens
-                              if (searchQuery.trim() === '' && defaultMembers.length > 0) {
-                                setSearchResults(defaultMembers);
-                                setHasMoreMembers(false);
-                              }
-                              setSearchOpen(true);
-                            }}
-                            sx={{
-                              '& .MuiOutlinedInput-root': {
-                                borderRadius: 2,
-                                backgroundColor: '#f8fafc',
-                                '&.Mui-focused': {
-                                  backgroundColor: 'white',
-                                  boxShadow: '0 0 0 3px rgba(79, 70, 229, 0.1)',
-                                }
-                              }
-                            }}
-                            InputProps={{
-                              startAdornment: (
-                                <InputAdornment position="start">
-                                  <SearchIcon sx={{ color: 'text.secondary', mr: 1 }} />
-                                </InputAdornment>
-                              ),
-                              endAdornment: searchQuery && (
-                                <InputAdornment position="end">
-                                  <IconButton 
-                                    size="small" 
-                                    onClick={() => {
-                                      setSearchQuery('');
-                                      setSearchOpen(true);
-                                      // When clearing search, show default members
-                                      setSearchResults(defaultMembers);
-                                      setHasMoreMembers(false);
-                                    }}
-                                    sx={{ opacity: 0.7 }}
-                                  >
-                                    <ClearIcon fontSize="small" />
-                                  </IconButton>
-                                </InputAdornment>
-                              ),
-                            }}
-                          />
-                          
-                          {/* FIXED: Enhanced search dropdown */}
-<ClickAwayListener onClickAway={handleClickAway}>
-                            <Popper
-                              open={searchOpen}
-                              anchorEl={searchAnchorRef.current}
-                              placement="bottom-start"
-                              className="search-dropdown"
-                              disablePortal={true}
-                              modifiers={[
-                                { name: 'flip', enabled: false },
-                                {
-                                  name: 'preventOverflow',
-                                  enabled: true,
-                                  options: { boundary: 'scrollParent', padding: 8 },
-                                },
-                                { name: 'offset', options: { offset: [0, 8] } },
-                                { name: 'computeStyles', options: { gpuAcceleration: false } },
-                              ]}
-                              style={{ 
-                                zIndex: 1500,
-                                width: searchAnchorRef.current?.clientWidth,
-                                maxHeight: 400,
-                                overflowY: 'auto',
-                                position: 'fixed',
-                              }}
-                              transition
-                            >
-                              {({ TransitionProps }) => (
-                                <Fade {...TransitionProps} timeout={200}>
-                                  <Paper 
-                                    elevation={0}
-                                    sx={{ 
-                                      borderRadius: 2,
-                                      boxShadow: 'none',
-                                      border: '1px solid',
-                                      borderColor: 'divider',
-                                      overflow: 'hidden',
-                                      backgroundColor: 'white',
-                                      position: 'relative' // Needed for absolute positioning of progress bar
-                                    }}
-                                  >
-                                    {/* FIXED: Progress bar is now absolute so it doesn't push content down */}
-                                    {searchLoading && (
-                                      <LinearProgress 
-                                        sx={{ 
-                                          position: 'absolute',
-                                          top: 0,
-                                          left: 0,
-                                          right: 0,
-                                          height: 3,
-                                          zIndex: 2
-                                        }} 
-                                      />
-                                    )}
-
-                                    {/* Header */}
-                                    <Box sx={{ 
-                                      p: 2, 
-                                      borderBottom: '1px solid', 
-                                      borderColor: 'divider',
-                                      backgroundColor: 'grey.50',
-                                      display: 'flex',
-                                      justifyContent: 'space-between',
-                                      alignItems: 'center'
-                                    }}>
-                                      <Typography variant="caption" color="text.secondary">
-                                        {searchQuery 
-                                          ? `Search results for "${searchQuery}"`
-                                          : `Recently active (${defaultMembers.length})`}
-                                      </Typography>
-                                    </Box>
-                                    
-                                    {/* Content Logic */}
-                                    {getAvailableMembers.length > 0 ? (
-                                      <>
-                                        <List 
-                                            dense 
-                                            disablePadding  
-                                            sx={{ 
-                                              maxHeight: 320, 
-                                              overflowY: 'auto',
-                                              opacity: searchLoading ? 0.6 : 1,
-                                              transition: 'opacity 0.2s' 
-                                            }}
-                                          >
-                                        {getAvailableMembers.map((member) => (
-                                          <ListItem 
-                                            key={member.id}
-                                            button
-                                            onClick={() => handleAddAssignee(member)}
-                                            sx={{
-                                              '&:hover': { backgroundColor: 'action.hover' },
-                                              borderBottom: '1px solid',
-                                              borderColor: 'divider',
-                                              '&:last-child': { borderBottom: 'none' }
-                                            }}
-                                          >
-                                            <ListItemAvatar>
-                                              <Box sx={{ position: 'relative', display: 'inline-flex' }}>
-                                                <Avatar 
-                                                  src={member.avatar || undefined}
-                                                  sx={{ width: 40, height: 40 }}
-                                                >
-                                                  {member.first_name?.[0]}{member.last_name?.[0]}
-                                                </Avatar>
-                                                {member.last_active && isUserOnline(member.last_active) && (
-                                                  <Box sx={{
-                                                      position: 'absolute', bottom: 0, right: 0, width: 12, height: 12,
-                                                      backgroundColor: '#10B981', border: '1px solid white', borderRadius: '50%',
-                                                      zIndex: 2,
-                                                    }}
-                                                  />
-                                                )}
-                                              </Box>
-                                            </ListItemAvatar>                                                                     
-                                              <ListItemText
-                                                primary={
-                                                  <Typography variant="body2" fontWeight="500">
-                                                    {member.first_name} {member.last_name}
-                                                  </Typography>
-                                                }
-                                                secondary={
-                                                  <Box component="span" sx={{ display: 'block' }}>
-                                                    <Typography variant="caption" color="text.secondary" display="block">
-                                                      {member.email}
-                                                    </Typography>
-                                                    {/* FIXED: Restored Last Active / Online status */}
-                                                    {member.last_active && (
-                                                      <Typography 
-                                                        variant="caption" 
-                                                        component="span"
-                                                        color={isUserOnline(member.last_active) ? 'success.main' : 'text.secondary'}
-                                                        fontWeight={isUserOnline(member.last_active) ? 600 : 400}
-                                                        display="block"
-                                                      >
-                                                        {isUserOnline(member.last_active) 
-                                                          ? 'Online' 
-                                                          : `Last active: ${formatLastActive(member.last_active)}`
-                                                        }
-                                                      </Typography>
-                                                    )}
-                                                  </Box>
-                                                }
-                                              />
-                                            <ListItemSecondaryAction>
-                                              <TeamRoleBadge role={member.teamRole} />
-                                            </ListItemSecondaryAction>
-                                          </ListItem>
-                                        ))}
-                                        </List>
-                                        
-                                        {/* Load More Button */}
-                                        {hasMoreMembers && searchQuery && (
-                                          <Box sx={{ p: 2, textAlign: 'center', borderTop: '1px solid', borderColor: 'divider' }}>
-                                            <Button 
-                                              size="small" 
-                                              onClick={loadMoreMembers}
-                                              disabled={searchLoading}
-                                              variant="outlined"
-                                              sx={{ borderRadius: 2 }}
-                                            >
-                                              {searchLoading ? 'Loading...' : 'Load More'}
-                                            </Button>
-                                          </Box>
-                                        )}
-                                      </>
-                                    ) : (
-                                      /* Empty State */
-                                      <Box sx={{ p: 3, textAlign: 'center' }}>
-                                        {searchLoading ? (
-                                          <Box sx={{ py: 2 }}>
-                                            <CircularProgress size={20} />
-                                            <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 1 }}>
-                                              Searching...
-                                            </Typography>
-                                          </Box>
-                                        ) : searchQuery ? (
-                                          <>
-                                            <SearchIcon sx={{ fontSize: 48, color: 'text.secondary', mb: 2, opacity: 0.5 }} />
-                                            <Typography variant="body2" color="text.secondary">
-                                              No members found for "{searchQuery}"
-                                            </Typography>
-                                          </>
-                                        ) : (
-                                          <Typography variant="body2" color="text.secondary">
-                                            No team members available
-                                          </Typography>
-                                        )}
-                                      </Box>
-                                    )}
-                                  </Paper>
-                                </Fade>
-                              )}
-                            </Popper>
-                          </ClickAwayListener>
-                        </Box>
-                        
-                        <FormControl sx={{ minWidth: isMobile ? '100%' : 140 }}>
-                          <Select
-                            value={selectedRoleFilter}
-                            onChange={(e) => {
-                              setSelectedRoleFilter(e.target.value as number | 'all');
-                              if (searchQuery) {
-                                debouncedSearch(searchQuery);
-                              }
-                            }}
-                            sx={{ borderRadius: 2 }}
-                            renderValue={(value) => (
-                              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                <FilterIcon fontSize="small" />
-                                <Typography variant="body2">
-                                  {value === 'all' ? 'All Roles' : 
-                                   value === 1 ? 'Owners' :
-                                   value === 2 ? 'Admins' :
-                                   value === 3 ? 'Members' : 'Guests'}
-                                </Typography>
-                              </Box>
-                            )}
-                          >
-                            <MenuItem value="all">All Roles</MenuItem>
-                            <MenuItem value={1}>Owners</MenuItem>
-                            <MenuItem value={2}>Admins</MenuItem>
-                            <MenuItem value={3}>Members</MenuItem>
-                            <MenuItem value={4}>Guests</MenuItem>
-                          </Select>
-                        </FormControl>
-                      </Box>
+                        <TeamMemberSearch
+                            teamId={projectData.team_id}
+                            disabled={!projectData.team_id}
+                            excludeIds={assignees.map(a => a.user.id)}
+                            onSelect={(member) => handleAddAssignee(member)}
+                            placeholder="Search team members to add..."
+                        />
                     </Paper>
-
-                    {!searchQuery && (
-                      <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', mb: 3 }}>
-                        {defaultMembers.length > 0 
-                          ? `Showing ${defaultMembers.length} recently active team members. Search to find more.`
-                          : 'Search for team members to add them to the project'}
-                      </Typography>
-                    )}
                   </Box>
                 </>
               )}
@@ -2227,7 +1462,7 @@ const AssigneeRow = React.memo(({
 
               <Paper sx={{ 
                 p: 3, 
-                borderRadius: 3,
+                borderRadius: 3, 
                 background: 'linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%)',
                 border: '1px solid',
                 borderColor: 'divider',
@@ -2444,12 +1679,11 @@ const AssigneeRow = React.memo(({
               background: 'linear-gradient(135deg, #4338ca 0%, #4f46e5 100%)',
               boxShadow: '0 6px 16px rgba(79, 70, 229, 0.4)',
             },
-            // --- THIS IS THE FIX BELOW ---
             '&:disabled': {
-              background: '#e2e8f0',  // Standard Light Grey (Slate 200)
-              color: '#94a3b8',       // Readable Muted Grey (Slate 400)
+              background: '#e2e8f0',
+              color: '#94a3b8',
               boxShadow: 'none',
-              cursor: 'not-allowed'   // Shows the "no" symbol on hover
+              cursor: 'not-allowed'
             }
           }}
         >
